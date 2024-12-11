@@ -1,0 +1,11 @@
+FROM mcr.microsoft.com/devcontainers/base:ubuntu24.04
+
+RUN apt update && apt upgrade -y
+RUN apt install -y jq curl
+COPY install_zig.sh /install_zig.sh
+
+USER vscode
+WORKDIR /home/vscode
+
+RUN /install_zig.sh
+
