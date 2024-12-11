@@ -2,8 +2,14 @@ const std = @import("std");
 const cpu = @import("cpu.zig");
 
 pub fn main() !void {
+    var test_file_buffer = [_]u8{0} ** 10000;
+    var f = try std.fs.cwd().openFile("./riscv-tests/isa/rv32ui-p-add.bin", .{});
+    const read_size = try f.readAll(&test_file_buffer);
+    std.debug.print("test file size = {d}\n", .{read_size});
+
     var c = cpu.CPU.init();
-    try c.load_memory(&[_]u8{ 0, 1, 2 }, 0);
+    try c.load_memory(test_file_buffer[0..read_size], 0);
+
     std.debug.print("OK!\n", .{});
 }
 
