@@ -3,17 +3,29 @@ const cpu = @import("cpu.zig");
 
 pub fn main() !void {
     var test_file_buffer = [_]u8{0} ** 10000;
-    var f = try std.fs.cwd().openFile("./riscv-tests/isa/rv32ui-p-add.bin", .{});
+    var f = try std.fs.cwd().openFile("./riscv-tests/isa/rv32ui-p-sra.bin", .{});
     const read_size = try f.readAll(&test_file_buffer);
     std.debug.print("test file size = {d}\n", .{read_size});
 
     var c = cpu.CPU.init();
     try c.load_memory(test_file_buffer[0..read_size], 0);
     while (true) {
-        try c.tick_cycle();
+        c.tick_cycle() catch |err| switch (err) {
+            cpu.CPUError.EcallInvoked => {
+                break;
+            },
+            else => {
+                return cpu.CPUError.IllegalInstruction;
+            },
+        };
     }
 
-    std.debug.print("OK!\n", .{});
+    const res_val = c.read_reg(10);
+    if (res_val == 0) {
+        std.debug.print("OK!\n", .{});
+    } else {
+        std.debug.print("FAIL val={}\n", .{res_val});
+    }
 }
 
 test "simple test" {

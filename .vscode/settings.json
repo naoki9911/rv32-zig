@@ -1,0 +1,4 @@
+{
+    "zig.path": "~/.local/zig-master/zig",
+    "zig.zls.path": "~/.local/zig-master/zls",
+}
