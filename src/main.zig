@@ -9,7 +9,9 @@ pub fn main() !void {
 
     var c = cpu.CPU.init();
     try c.load_memory(test_file_buffer[0..read_size], 0);
-    try c.tick_cycle();
+    while (true) {
+        try c.tick_cycle();
+    }
 
     std.debug.print("OK!\n", .{});
 }
