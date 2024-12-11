@@ -7,6 +7,7 @@ const MEMORY_BASE_ADDR = 0x80000000; // riscv-tests
 const CPUError = error{
     TooLargeMemoryData,
     OutOfMemoryArea,
+    IllegalInstruction,
 };
 
 pub const CPU = struct {
@@ -50,6 +51,8 @@ pub const CPU = struct {
 
         // instructions are stored in 4 bytes aligned
         const inst = self.mem[inst_addr >> 2];
-        _ = inst;
+        std.debug.print("MEM[0x{x}] INST=0x{x}\n", .{ self.pc, inst });
+
+        return CPUError.IllegalInstruction;
     }
 };
