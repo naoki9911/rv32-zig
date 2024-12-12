@@ -20,6 +20,7 @@ pub const CPU = struct {
     pc: WORD,
     regs: [32]WORD,
     mem: [MEMORY_SIZE >> 2]WORD,
+    mem_reserves: std.AutoHashMap(WORD, void),
 
     // CSRs
     hardware_thread_id: u32 = 0,
@@ -39,11 +40,12 @@ pub const CPU = struct {
 
     const Self = @This();
 
-    pub fn init() Self {
+    pub fn init(allocator: std.mem.Allocator) Self {
         return .{
             .pc = MEMORY_BASE_ADDR, // for riscv-tests
             .regs = [1]WORD{0} ** 32,
             .mem = [1]WORD{0} ** (MEMORY_SIZE >> 2),
+            .mem_reserves = std.AutoHashMap(WORD, void).init(allocator),
         };
     }
 
@@ -64,7 +66,7 @@ pub const CPU = struct {
         }
     }
 
-    pub fn tick_cycle(self: *Self) CPUError!void {
+    pub fn tick_cycle(self: *Self) !void {
         if (self.pc > self.mem.len + MEMORY_BASE_ADDR) {
             return CPUError.OutOfMemoryArea;
         }
@@ -612,6 +614,120 @@ pub const CPU = struct {
                     }
                 }
             },
+            0b0101111 => {
+                const funct5 = inst >> 27;
+                const aq = inst >> 26 & 0x1;
+                const rl = inst >> 25 & 0x1;
+                switch (funct3) {
+                    0b010 => {
+                        // load a data value from the address in rs1, place the value into register rd,
+                        // apply a binary operator to the loaded value and the original value in rs2,
+                        // then store the result back to the original address in rs1.
+                        // If the address is not naturally aligned, an address-misaligned exception or an access-fault exception will be generated.
+                        // The access-fault exception can be generated for a memory access that would otherwise be able to
+                        // complete except for the misalignment, if the misaligned access should not be emulated
+                        const mem_real_addr = self.read_reg(rs1) - MEMORY_BASE_ADDR;
+                        // memory address must be aligned
+                        if (mem_real_addr & 0x3 != 0) {
+                            return CPUError.InvalidAlignment;
+                        }
+                        const rs2_val = self.read_reg(rs2);
+                        const mem_val = self.mem[mem_real_addr >> 2];
+                        if (funct5 != 0b00010 and funct5 != 0b00011) {
+                            // not LR.W and SC.W
+                            self.regs[rd] = mem_val;
+                        }
+
+                        switch (funct5) {
+                            0b00000 => {
+                                log.debug("AMOADD.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
+                                self.mem[mem_real_addr >> 2] = @addWithOverflow(mem_val, rs2_val)[0];
+                            },
+                            0b00001 => {
+                                log.debug("AMOSWAP.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
+                                self.mem[mem_real_addr >> 2] = rs2_val;
+                            },
+                            0b00100 => {
+                                log.debug("AMOXOR.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
+                                self.mem[mem_real_addr >> 2] = mem_val ^ rs2_val;
+                            },
+                            0b01100 => {
+                                log.debug("AMOAND.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
+                                self.mem[mem_real_addr >> 2] = mem_val & rs2_val;
+                            },
+                            0b01000 => {
+                                log.debug("AMOOR.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
+                                self.mem[mem_real_addr >> 2] = mem_val | rs2_val;
+                            },
+                            0b10000 => {
+                                log.debug("AMOMIN.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
+                                if (@as(i32, @bitCast(mem_val)) < @as(i32, @bitCast(rs2_val))) {
+                                    self.mem[mem_real_addr >> 2] = mem_val;
+                                } else {
+                                    self.mem[mem_real_addr >> 2] = rs2_val;
+                                }
+                            },
+                            0b10100 => {
+                                log.debug("AMOMAX.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
+                                if (@as(i32, @bitCast(mem_val)) > @as(i32, @bitCast(rs2_val))) {
+                                    self.mem[mem_real_addr >> 2] = mem_val;
+                                } else {
+                                    self.mem[mem_real_addr >> 2] = rs2_val;
+                                }
+                            },
+                            0b11000 => {
+                                log.debug("AMOMINU.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
+                                if (mem_val < rs2_val) {
+                                    self.mem[mem_real_addr >> 2] = mem_val;
+                                } else {
+                                    self.mem[mem_real_addr >> 2] = rs2_val;
+                                }
+                            },
+                            0b11100 => {
+                                log.debug("AMOMAXU.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
+                                if (mem_val > rs2_val) {
+                                    self.mem[mem_real_addr >> 2] = mem_val;
+                                } else {
+                                    self.mem[mem_real_addr >> 2] = rs2_val;
+                                }
+                            },
+                            0b00010 => {
+                                log.debug("LR.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
+                                if (rs2 != 0) {
+                                    return CPUError.IllegalInstruction;
+                                }
+                                // LR.W loads a word from the address in rs1,
+                                // places the sign-extended value in rd, and registers a reservation set—a set of bytes that subsumes the
+                                // bytes in the addressed word.
+
+                                // TODO: no need to sign extend?
+                                self.regs[rd] = mem_val;
+                                try self.mem_reserves.put(mem_real_addr, void{});
+                            },
+                            0b00011 => {
+                                log.debug("SC.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
+                                // SC.W conditionally writes a word in rs2 to the address in rs1: the SC.W
+                                // succeeds only if the reservation is still valid and the reservation set contains the bytes being written. If
+                                // the SC.W succeeds, the instruction writes the word in rs2 to memory, and it writes zero to rd. If the
+                                // SC.W fails, the instruction does not write to memory, and it writes a nonzero value to rd. For the
+                                // purposes of memory protection, a failed SC.W may be treated like a store. Regardless of success or
+                                // failure, executing an SC.W instruction invalidates any reservation held by this hart.
+
+                                // TODO: is this OK?
+                                if (self.mem_reserves.get(mem_real_addr)) |_| {
+                                    self.mem[mem_real_addr >> 2] = rs2_val;
+                                    self.regs[rd] = 0;
+                                } else {
+                                    self.regs[rd] = 1;
+                                }
+                                self.mem_reserves.clearRetainingCapacity();
+                            },
+                            else => return CPUError.IllegalInstruction,
+                        }
+                    },
+                    else => return CPUError.IllegalInstruction,
+                }
+            },
             else => return CPUError.IllegalInstruction,
         }
 
@@ -780,6 +896,16 @@ test "risc-v tests" {
         "rv32um-p-mulhu.bin",
         "rv32um-p-rem.bin",
         "rv32um-p-remu.bin",
+        "rv32ua-p-amoadd_w.bin",
+        "rv32ua-p-amoand_w.bin",
+        "rv32ua-p-amomaxu_w.bin",
+        "rv32ua-p-amomax_w.bin",
+        "rv32ua-p-amominu_w.bin",
+        "rv32ua-p-amomin_w.bin",
+        "rv32ua-p-amoor_w.bin",
+        "rv32ua-p-amoswap_w.bin",
+        "rv32ua-p-amoxor_w.bin",
+        "rv32ua-p-lrsc.bin",
     };
     // zig fmt: on
     var test_file_buffer = [_]u8{0} ** 10000;
@@ -789,7 +915,8 @@ test "risc-v tests" {
         const read_size = try f.readAll(&test_file_buffer);
         std.debug.print("testing {s} (size={d})\n", .{ test_file, read_size });
 
-        var c = CPU.init();
+        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+        var c = CPU.init(gpa.allocator());
         try c.load_memory(test_file_buffer[0..read_size], 0);
         while (true) {
             c.tick_cycle() catch |err| switch (err) {
