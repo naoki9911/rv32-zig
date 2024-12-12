@@ -3,7 +3,7 @@ const cpu = @import("cpu.zig");
 
 pub fn main() !void {
     var test_file_buffer = [_]u8{0} ** 10000;
-    var f = try std.fs.cwd().openFile("./riscv-tests/isa/rv32ui-p-sra.bin", .{});
+    var f = try std.fs.cwd().openFile("./riscv-tests/isa/rv32um-p-rem.bin", .{});
     const read_size = try f.readAll(&test_file_buffer);
     std.debug.print("test file size = {d}\n", .{read_size});
 

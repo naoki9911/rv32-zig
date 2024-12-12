@@ -258,75 +258,166 @@ pub const CPU = struct {
                 const rs2_val = self.read_reg(rs2);
                 switch (funct3) {
                     0b000 => {
-                        if (funct7 == 0) {
-                            log.debug("ADD rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
-                            self.regs[rd] = @addWithOverflow(rs1_val, rs2_val)[0];
-                        } else if (funct7 == 0b0100000) {
-                            log.debug("SUB rd={} rs1={} 0x{x} rs2={} 0x{x}", .{ rd, rs1, rs1_val, rs2, rs2_val });
-                            self.regs[rd] = @subWithOverflow(rs1_val, rs2_val)[0];
-                            log.debug("rs1_val={} rs2_val={} res={}", .{ @as(i32, @bitCast(rs1_val)), @as(i32, @bitCast(rs2_val)), @as(i32, @bitCast(self.regs[rd])) });
-                        } else {
-                            return CPUError.IllegalInstruction;
+                        switch (funct7) {
+                            0b0000000 => {
+                                log.debug("ADD rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
+                                self.regs[rd] = @addWithOverflow(rs1_val, rs2_val)[0];
+                            },
+                            0b0100000 => {
+                                log.debug("SUB rd={} rs1={} 0x{x} rs2={} 0x{x}", .{ rd, rs1, rs1_val, rs2, rs2_val });
+                                self.regs[rd] = @subWithOverflow(rs1_val, rs2_val)[0];
+                            },
+                            0b0000001 => {
+                                log.debug("MUL rd={} rs1={} 0x{x} rs2={} 0x{x}", .{ rd, rs1, rs1_val, rs2, rs2_val });
+                                self.regs[rd] = @mulWithOverflow(rs1_val, rs2_val)[0];
+                            },
+                            else => {
+                                return CPUError.IllegalInstruction;
+                            },
                         }
                     },
                     0b001 => {
-                        if (funct7 != 0) {
-                            return CPUError.IllegalInstruction;
+                        switch (funct7) {
+                            0b0000000 => {
+                                log.debug("SLL rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
+                                // rs1 by the shift amount held in the lower 5 bits of register rs2.
+                                self.regs[rd] = std.math.shl(WORD, self.read_reg(rs1), self.read_reg(rs2) & 0x1F);
+                            },
+                            0b0000001 => {
+                                log.debug("MULH rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
+                                const rs1_vali: i64 = @intCast(@as(i32, @bitCast(rs1_val)));
+                                const rs2_vali: i64 = @intCast(@as(i32, @bitCast(rs2_val)));
+                                const res_i64 = @mulWithOverflow(rs1_vali, rs2_vali)[0];
+                                self.regs[rd] = @intCast((@as(u64, @bitCast(res_i64)) >> 32));
+                            },
+                            else => return CPUError.IllegalInstruction,
                         }
-                        log.debug("SLL rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
-                        // rs1 by the shift amount held in the lower 5 bits of register rs2.
-                        self.regs[rd] = std.math.shl(WORD, self.read_reg(rs1), self.read_reg(rs2) & 0x1F);
                     },
                     0b010 => {
-                        if (funct7 != 0) {
-                            return CPUError.IllegalInstruction;
-                        }
-                        log.debug("SLT rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
-                        if (@as(i32, @bitCast(rs1_val)) < @as(i32, @bitCast(rs2_val))) {
-                            self.regs[rd] = 1;
-                        } else {
-                            self.regs[rd] = 0;
+                        switch (funct7) {
+                            0b0000000 => {
+                                log.debug("SLT rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
+                                if (@as(i32, @bitCast(rs1_val)) < @as(i32, @bitCast(rs2_val))) {
+                                    self.regs[rd] = 1;
+                                } else {
+                                    self.regs[rd] = 0;
+                                }
+                            },
+                            0b0000001 => {
+                                log.debug("MULHSU rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
+                                const rs1_vali: i64 = @intCast(@as(i32, @bitCast(rs1_val)));
+                                const rs2_vali: i64 = @intCast(rs2_val); // this is treated as unsigned value
+                                const res_i64 = @mulWithOverflow(rs1_vali, rs2_vali)[0];
+                                self.regs[rd] = @intCast((@as(u64, @bitCast(res_i64)) >> 32));
+                            },
+                            else => return CPUError.IllegalInstruction,
                         }
                     },
                     0b011 => {
-                        if (funct7 != 0) {
-                            return CPUError.IllegalInstruction;
-                        }
-                        log.debug("SLTU rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
-                        if (rs1_val < rs2_val) {
-                            self.regs[rd] = 1;
-                        } else {
-                            self.regs[rd] = 0;
+                        switch (funct7) {
+                            0b0000000 => {
+                                log.debug("SLTU rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
+                                if (rs1_val < rs2_val) {
+                                    self.regs[rd] = 1;
+                                } else {
+                                    self.regs[rd] = 0;
+                                }
+                            },
+                            0b0000001 => {
+                                log.debug("MULH rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
+                                const rs1_vall: u64 = @intCast(rs1_val);
+                                const rs2_vall: u64 = @intCast(rs2_val);
+                                const res = @mulWithOverflow(rs1_vall, rs2_vall)[0];
+                                self.regs[rd] = @intCast(res >> 32);
+                            },
+                            else => return CPUError.IllegalInstruction,
                         }
                     },
                     0b100 => {
-                        if (funct7 != 0) {
-                            return CPUError.IllegalInstruction;
+                        switch (funct7) {
+                            0b0000000 => {
+                                log.debug("XOR rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
+                                self.regs[rd] = rs1_val ^ rs2_val;
+                            },
+                            0b0000001 => {
+                                log.debug("DIV rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
+                                var res: i32 = -1;
+                                const rs1_vali: i32 = @bitCast(rs1_val);
+                                const rs2_vali: i32 = @bitCast(rs2_val);
+                                //  Table 11. Semantics for division by zero and division overflow.
+                                if (rs2_val == 0) {} else if (rs1_vali == -0x80000000 and rs2_vali == -1) {
+                                    res = rs1_vali;
+                                } else {
+                                    res = @divTrunc(rs1_vali, rs2_vali);
+                                }
+                                self.regs[rd] = @bitCast(res);
+                            },
+                            else => {
+                                return CPUError.IllegalInstruction;
+                            },
                         }
-                        log.debug("XOR rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
-                        self.regs[rd] = rs1_val ^ rs2_val;
                     },
                     0b101 => {
                         const shamt: u5 = @intCast(rs2_val & 0x1F);
-                        if (funct7 == 0b0000000) {
-                            log.debug("SRL rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
-                            self.regs[rd] = rs1_val >> shamt;
-                        } else if (funct7 == 0b0100000) {
-                            log.debug("SRA rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
-                            const bit_width = @bitSizeOf(WORD) - @as(WORD_BIT_WIDTH_PLUS_ONE, shamt);
-                            log.debug("shamt={} bit_width={}", .{ shamt, bit_width });
-                            self.regs[rd] = sign_ext(rs1_val >> shamt, bit_width);
-                        } else {
-                            return CPUError.IllegalInstruction;
+                        switch (funct7) {
+                            0b0000000 => {
+                                log.debug("SRL rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
+                                self.regs[rd] = rs1_val >> shamt;
+                            },
+                            0b0100000 => {
+                                log.debug("SRA rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
+                                const bit_width = @bitSizeOf(WORD) - @as(WORD_BIT_WIDTH_PLUS_ONE, shamt);
+                                log.debug("shamt={} bit_width={}", .{ shamt, bit_width });
+                                self.regs[rd] = sign_ext(rs1_val >> shamt, bit_width);
+                            },
+                            0b0000001 => {
+                                log.debug("DIVU rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
+                                if (rs2_val == 0) {
+                                    self.regs[rd] = 0xFFFF_FFFF;
+                                } else {
+                                    self.regs[rd] = @divTrunc(rs1_val, rs2_val);
+                                }
+                            },
+                            else => return CPUError.IllegalInstruction,
                         }
                     },
                     0b110 => {
-                        log.debug("OR rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
-                        self.regs[rd] = rs1_val | rs2_val;
+                        switch (funct7) {
+                            0b0000000 => {
+                                log.debug("OR rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
+                                self.regs[rd] = rs1_val | rs2_val;
+                            },
+                            0b0000001 => {
+                                log.debug("REM rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
+                                const rs1_vali: i32 = @bitCast(rs1_val);
+                                const rs2_vali: i32 = @bitCast(rs2_val);
+                                var res: i32 = rs1_vali;
+                                if (rs2_val == 0) {} else if (rs1_vali == -0x80000000 and rs2_vali == -1) {
+                                    res = 0;
+                                } else {
+                                    res = @rem(rs1_vali, rs2_vali);
+                                }
+                                self.regs[rd] = @bitCast(res);
+                            },
+                            else => return CPUError.IllegalInstruction,
+                        }
                     },
                     0b111 => {
-                        log.debug("AND rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
-                        self.regs[rd] = rs1_val & rs2_val;
+                        switch (funct7) {
+                            0b0000000 => {
+                                log.debug("AND rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
+                                self.regs[rd] = rs1_val & rs2_val;
+                            },
+                            0b0000001 => {
+                                log.debug("REMU rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
+                                var res = rs1_val;
+                                if (rs2_val != 0) {
+                                    res = @rem(rs1_val, rs2_val);
+                                }
+                                self.regs[rd] = res;
+                            },
+                            else => return CPUError.IllegalInstruction,
+                        }
                     },
                     else => {
                         return CPUError.IllegalInstruction;
@@ -681,6 +772,14 @@ test "risc-v tests" {
         "rv32ui-p-sw.bin",
         "rv32ui-p-xor.bin",
         "rv32ui-p-xori.bin",
+        "rv32um-p-div.bin",
+        "rv32um-p-divu.bin",
+        "rv32um-p-mul.bin",
+        "rv32um-p-mulh.bin",
+        "rv32um-p-mulhsu.bin",
+        "rv32um-p-mulhu.bin",
+        "rv32um-p-rem.bin",
+        "rv32um-p-remu.bin",
     };
     // zig fmt: on
     var test_file_buffer = [_]u8{0} ** 10000;
