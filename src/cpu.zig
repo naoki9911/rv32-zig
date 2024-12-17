@@ -279,7 +279,7 @@ const CSR = struct {
     fn read(self: Self, csr: u12) CPUError!WORD {
         const level = @as(u2, @intCast((csr >> 8) & 0x3));
         if (level > @as(u2, @intFromEnum(self.current_level))) {
-            log.err("[CSR.READ] insufficient privilege require={} current={}", .{ @as(Self.PrivilegeLevels, @enumFromInt(level)), self.current_level });
+            log.warn("[CSR.READ] insufficient privilege require={} current={}", .{ @as(Self.PrivilegeLevels, @enumFromInt(level)), self.current_level });
             return CPUError.IllegalInstruction;
         }
 
@@ -356,11 +356,11 @@ const CSR = struct {
                 return val;
             },
             .mnscratch, .mnepc, .mncause, .mnstatus => {
-                log.err("Smrnmi extension is not supported", .{});
+                log.warn("Smrnmi extension is not supported", .{});
                 return 0;
             },
             .satp => {
-                log.err("Supervisor mode is not supported", .{});
+                log.warn("Supervisor mode is not supported", .{});
                 return 0;
             },
             else => {
@@ -379,7 +379,7 @@ const CSR = struct {
     fn write(self: *Self, csr: u12, val: u32) CPUError!void {
         const level = @as(u2, @intCast((csr >> 8) & 0x3));
         if (level > @as(u2, @intFromEnum(self.current_level))) {
-            log.err("[CSR.READ] insufficient privilege require={} current={}", .{ @as(Self.PrivilegeLevels, @enumFromInt(level)), self.current_level });
+            log.warn("[CSR.READ] insufficient privilege require={} current={}", .{ @as(Self.PrivilegeLevels, @enumFromInt(level)), self.current_level });
             return CPUError.IllegalInstruction;
         }
 
@@ -516,11 +516,11 @@ const CSR = struct {
                 self.reg_pmpaddr[idx] = val;
             },
             .mnscratch, .mnepc, .mncause, .mnstatus => {
-                log.err("Smrnmi extension is not supported", .{});
+                log.warn("Smrnmi extension is not supported", .{});
                 return CPUError.IllegalInstruction;
             },
             .satp => {
-                log.err("Supervisor mode is not supported", .{});
+                log.warn("Supervisor mode is not supported", .{});
                 return CPUError.IllegalInstruction;
             },
             else => {
@@ -685,7 +685,7 @@ pub const CPU = struct {
         var ecall_exit = false;
         errdefer {
             if (!ecall_exit) {
-                std.log.err("Illegal instruction at MEM[0x{x}] INST=0b{b} (0x{x})", .{ self.pc, inst, inst });
+                std.log.warn("Illegal instruction at MEM[0x{x}] INST=0b{b} (0x{x})", .{ self.pc, inst, inst });
             }
         }
 
