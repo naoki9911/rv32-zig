@@ -6,37 +6,578 @@ const WORD_BIT_WIDTH_PLUS_ONE = u6;
 const MEMORY_SIZE = 0x10000; // 64KiB
 const MEMORY_BASE_ADDR = 0x80000000; // riscv-tests
 
+const CSR = struct {
+    const PrivilegeLevels = enum(u2) {
+        User = 0b00,
+        Supervisor = 0b01,
+        Reserved = 0b10,
+        Machine = 0b11,
+    };
+
+    // zig fmt: off
+    const Registers = enum(u12) {
+        // Machine Information Registers
+        mvendorid  = 0xF11, // MRO, Vendor ID
+        marchid    = 0xF12, // MRO, Architectuere ID
+        mimpid     = 0xF13, // MRO, Implementation ID
+        mhartid    = 0xF14, // MRO, Hardware thread ID
+        mconfigptr = 0xF15, // MRO, Pointer to configuration data structure
+
+        // Machine Trap Setup
+        mstatus    = 0x300, // MRW, Machine status register.
+        misa       = 0x301, // MRW, ISA and extensions
+        medeleg    = 0x302, // MRW, Machine exception delegation register.
+        mideleg    = 0x303, // MRW, Machine interrupt delegation register.
+        mie        = 0x304, // MRW, Machine interrupt-enable register.
+        mtvec      = 0x305, // MRW, Machine trap-handler base address.
+        mcounteren = 0x306, // MRW, Machine counter enable.
+        mstatush   = 0x310, // MRW, Additional machine status register, RV32 only.
+        medelegh   = 0x312, // MRW, Upper 32 bits of medeleg, RV32 only.
+
+        // Machine Trap Handling
+        mscratch = 0x340, // MRW, Scratch register for machine trap handlers.
+        mepc     = 0x341, // MRW, Machine exception program counter.
+        mcause   = 0x342, // MRW, Machine trap cause.
+        mtval    = 0x343, // MRW, Machine bad address or instruction.
+        mip      = 0x344, // MRW, Machine interrupt pending.
+        mtinst   = 0x34A, // MRW, Machine trap instruction (transformed).
+        mtval2   = 0x34B, // MRW, Machine bad guest physical address.
+
+        // Machine Memory Protection
+        pmpcfg0   = 0x3A0, // MRW, Physical memory protection configuration.
+        pmpcfg1   = 0x3A1, // MRW, Physical memory protection configuration. RV32 only
+        pmpcfg2   = 0x3A2, // MRW, Physical memory protection configuration.
+        pmpcfg3   = 0x3A3, // MRW, Physical memory protection configuration. RV32 only
+        pmpcfg4   = 0x3A4, // MRW, Physical memory protection configuration.
+        pmpcfg5   = 0x3A5, // MRW, Physical memory protection configuration. RV32 only
+        pmpcfg6   = 0x3A6, // MRW, Physical memory protection configuration.
+        pmpcfg7   = 0x3A7, // MRW, Physical memory protection configuration. RV32 only
+        pmpcfg8   = 0x3A8, // MRW, Physical memory protection configuration.
+        pmpcfg9   = 0x3A9, // MRW, Physical memory protection configuration. RV32 only
+        pmpcfg10  = 0x3AA, // MRW, Physical memory protection configuration.
+        pmpcfg11  = 0x3AB, // MRW, Physical memory protection configuration. RV32 only
+        pmpcfg12  = 0x3AC, // MRW, Physical memory protection configuration.
+        pmpcfg13  = 0x3AD, // MRW, Physical memory protection configuration. RV32 only
+        pmpcfg14  = 0x3AE, // MRW, Physical memory protection configuration.
+        pmpcfg15  = 0x3AF, // MRW, Physical memory protection configuration. RV32 only
+        pmpaddr0  = 0x3B0, // MRW, Physical memory protection address register
+        pmpaddr1  = 0x3B1, // MRW, Physical memory protection address register
+        pmpaddr2  = 0x3B2, // MRW, Physical memory protection address register
+        pmpaddr3  = 0x3B3, // MRW, Physical memory protection address register
+        pmpaddr4  = 0x3B4, // MRW, Physical memory protection address register
+        pmpaddr5  = 0x3B5, // MRW, Physical memory protection address register
+        pmpaddr6  = 0x3B6, // MRW, Physical memory protection address register
+        pmpaddr7  = 0x3B7, // MRW, Physical memory protection address register
+        pmpaddr8  = 0x3B8, // MRW, Physical memory protection address register
+        pmpaddr9  = 0x3B9, // MRW, Physical memory protection address register
+        pmpaddr10 = 0x3BA, // MRW, Physical memory protection address register
+        pmpaddr11 = 0x3BB, // MRW, Physical memory protection address register
+        pmpaddr12 = 0x3BC, // MRW, Physical memory protection address register
+        pmpaddr13 = 0x3BD, // MRW, Physical memory protection address register
+        pmpaddr14 = 0x3BE, // MRW, Physical memory protection address register
+        pmpaddr15 = 0x3BF, // MRW, Physical memory protection address register
+        pmpaddr16 = 0x3C0, // MRW, Physical memory protection address register
+        pmpaddr17 = 0x3C1, // MRW, Physical memory protection address register
+        pmpaddr18 = 0x3C2, // MRW, Physical memory protection address register
+        pmpaddr19 = 0x3C3, // MRW, Physical memory protection address register
+        pmpaddr20 = 0x3C4, // MRW, Physical memory protection address register
+        pmpaddr21 = 0x3C5, // MRW, Physical memory protection address register
+        pmpaddr22 = 0x3C6, // MRW, Physical memory protection address register
+        pmpaddr23 = 0x3C7, // MRW, Physical memory protection address register
+        pmpaddr24 = 0x3C8, // MRW, Physical memory protection address register
+        pmpaddr25 = 0x3C9, // MRW, Physical memory protection address register
+        pmpaddr26 = 0x3CA, // MRW, Physical memory protection address register
+        pmpaddr27 = 0x3CB, // MRW, Physical memory protection address register
+        pmpaddr28 = 0x3CC, // MRW, Physical memory protection address register
+        pmpaddr29 = 0x3CD, // MRW, Physical memory protection address register
+        pmpaddr30 = 0x3CE, // MRW, Physical memory protection address register
+        pmpaddr31 = 0x3CF, // MRW, Physical memory protection address register
+        pmpaddr32 = 0x3D0, // MRW, Physical memory protection address register
+        pmpaddr33 = 0x3D1, // MRW, Physical memory protection address register
+        pmpaddr34 = 0x3D2, // MRW, Physical memory protection address register
+        pmpaddr35 = 0x3D3, // MRW, Physical memory protection address register
+        pmpaddr36 = 0x3D4, // MRW, Physical memory protection address register
+        pmpaddr37 = 0x3D5, // MRW, Physical memory protection address register
+        pmpaddr38 = 0x3D6, // MRW, Physical memory protection address register
+        pmpaddr39 = 0x3D7, // MRW, Physical memory protection address register
+        pmpaddr40 = 0x3D8, // MRW, Physical memory protection address register
+        pmpaddr41 = 0x3D9, // MRW, Physical memory protection address register
+        pmpaddr42 = 0x3DA, // MRW, Physical memory protection address register
+        pmpaddr43 = 0x3DB, // MRW, Physical memory protection address register
+        pmpaddr44 = 0x3DC, // MRW, Physical memory protection address register
+        pmpaddr45 = 0x3DD, // MRW, Physical memory protection address register
+        pmpaddr46 = 0x3DE, // MRW, Physical memory protection address register
+        pmpaddr47 = 0x3DF, // MRW, Physical memory protection address register
+        pmpaddr48 = 0x3E0, // MRW, Physical memory protection address register
+        pmpaddr49 = 0x3E1, // MRW, Physical memory protection address register
+        pmpaddr50 = 0x3E2, // MRW, Physical memory protection address register
+        pmpaddr51 = 0x3E3, // MRW, Physical memory protection address register
+        pmpaddr52 = 0x3E4, // MRW, Physical memory protection address register
+        pmpaddr53 = 0x3E5, // MRW, Physical memory protection address register
+        pmpaddr54 = 0x3E6, // MRW, Physical memory protection address register
+        pmpaddr55 = 0x3E7, // MRW, Physical memory protection address register
+        pmpaddr56 = 0x3E8, // MRW, Physical memory protection address register
+        pmpaddr57 = 0x3E9, // MRW, Physical memory protection address register
+        pmpaddr58 = 0x3EA, // MRW, Physical memory protection address register
+        pmpaddr59 = 0x3EB, // MRW, Physical memory protection address register
+        pmpaddr60 = 0x3EC, // MRW, Physical memory protection address register
+        pmpaddr61 = 0x3ED, // MRW, Physical memory protection address register
+        pmpaddr62 = 0x3EE, // MRW, Physical memory protection address register
+        pmpaddr63 = 0x3EF, // MRW, Physical memory protection address register
+
+
+        // "Smrnmi" Extension for Resumable Non-Maskable Interrupts,
+        // Machine Non-Maskable Interrupt Handling
+        // TODO: support this
+        mnscratch  = 0x740, // MRW, Resumable NMI scratch register.
+        mnepc      = 0x741, // MRW, Resumable NMI program counter.
+        mncause    = 0x742, // MRW, Resumable NMI cause.
+        mnstatus   = 0x744, // MRW, Resumable NMI status.
+
+        // Machine Trap Setup
+        // Debug related CSRs
+        // https://github.com/riscv/riscv-debug-spec/blob/release/riscv-debug-release.pdf
+        tselect  = 0x7A0, // Trigger select
+        tdata1   = 0x7A1, // Trigger select
+        tdata2   = 0x7A2, // Trigger select
+        tdata3   = 0x7A3, // Trigger select
+        tcontrol = 0x7A5, // Trigger control
+
+
+        // Supervisor Protection and Translation
+        // TODO: support this
+        satp = 0x180, // SRW, Supervisor address translation and protection.
+        _,
+    };
+    // zig fmt: on
+
+    const RegMstatus = packed struct(u32) {
+        wpri1: u1 = 0,
+        sie: u1 = 0,
+        wpri2: u1 = 0,
+        mie: u1 = 0,
+        wpri3: u1 = 0,
+        spie: u1 = 0,
+        ube: u1 = 0,
+        mpie: u1 = 0,
+        spp: u1 = 0,
+        vs: u2 = 0,
+        mpp: u2 = 0,
+        fs: u2 = 0,
+        xs: u2 = 0,
+        mprv: u1 = 0,
+        sum: u1 = 0,
+        mxr: u1 = 0,
+        tvm: u1 = 0,
+        tw: u1 = 0,
+        tsr: u1 = 0,
+        wpri4: u8 = 0,
+        sd: u1 = 0,
+    };
+
+    const RegMstatush = packed struct(u32) {
+        wpri1: u4 = 0,
+        sbe: u1 = 0,
+        mbe: u1 = 0,
+        wpri2: u26 = 0,
+    };
+
+    const RegMtvec = packed struct(u32) {
+        mode: u2 = 0,
+        base: u30 = 0,
+    };
+    const RegPmpConfig = packed struct(u8) {
+        r: u1 = 0,
+        w: u1 = 0,
+        x: u1 = 0,
+        a: u2 = 0,
+        reserved_zero: u2 = 0,
+        l: u1 = 0,
+    };
+    const RegMie = packed struct(u32) {
+        reserved1: u1 = 0,
+        ssie: u1 = 0,
+        reserved2: u1 = 0,
+        msie: u1 = 0,
+        reserved3: u1 = 0,
+        stie: u1 = 0,
+        reserved4: u1 = 0,
+        mtie: u1 = 0,
+        reserved5: u1 = 0,
+        seie: u1 = 0,
+        reserved6: u1 = 0,
+        meie: u1 = 0,
+        reserved7: u1 = 0,
+        lcofie: u1 = 0,
+        reserved8: u2 = 0,
+        reserved9: u16 = 0,
+    };
+
+    // RV32IMA-MU
+    const RegMisa = packed struct(u32) {
+        a: u1 = 1,
+        b: u1 = 0,
+        c: u1 = 0,
+        d: u1 = 0,
+        e: u1 = 0,
+        f: u1 = 0,
+        g: u1 = 0,
+        h: u1 = 0,
+        i: u1 = 1,
+        j: u1 = 0,
+        k: u1 = 0,
+        l: u1 = 0,
+        m: u1 = 1,
+        n: u1 = 0,
+        o: u1 = 0,
+        p: u1 = 0,
+        q: u1 = 0,
+        r: u1 = 0,
+        s: u1 = 0,
+        t: u1 = 0,
+        u: u1 = 1,
+        v: u1 = 0,
+        w: u1 = 0,
+        x: u1 = 0,
+        y: u1 = 0,
+        z: u1 = 0,
+        zero: u4 = 0,
+        mxl: u2 = 1,
+    };
+
+    const RegMcause = packed struct(u32) {
+        exception_code: u31,
+        interrupt: u1,
+    };
+
+    const Self = @This();
+
+    // TODO: when the core initialized, entering machine mode is fine?
+    current_level: PrivilegeLevels = .Machine,
+    hardware_thread_id: WORD = 0,
+    reg_mtvec: RegMtvec = .{},
+    reg_mstatus: RegMstatus = .{},
+    reg_mstatush: RegMstatush = .{},
+    reg_pmpcfg: [64]RegPmpConfig = [1]RegPmpConfig{.{}} ** 64,
+    reg_pmpaddr: [64]WORD = [1]WORD{0} ** 64,
+    reg_mie: RegMie = .{},
+    reg_mepc: WORD = 0,
+    reg_mscratch: WORD = 0,
+    reg_mcause: RegMcause = .{ .exception_code = 0, .interrupt = 0 },
+    reg_mtval: WORD = 0,
+
+    // Machine-mode standard read-write CSRs 0x7A0-0x7BF are reserved for use by the debug system. Of
+    // these CSRs, 0x7A0-0x7AF are accessible to machine mode, whereas 0x7B0-0x7BF are only visible to
+    // debug mode. Implementations should raise illegal-instruction exceptions on machine-mode access to
+    // the latter set of registers.
+    debug_mode: bool = false,
+
+    fn init() Self {
+        return .{};
+    }
+
+    fn read(self: Self, csr: u12) CPUError!WORD {
+        const level = @as(u2, @intCast((csr >> 8) & 0x3));
+        if (level > @as(u2, @intFromEnum(self.current_level))) {
+            log.err("[CSR.READ] insufficient privilege require={} current={}", .{ @as(Self.PrivilegeLevels, @enumFromInt(level)), self.current_level });
+            return CPUError.IllegalInstruction;
+        }
+
+        const c: Registers = @enumFromInt(csr);
+        switch (c) {
+            .mvendorid, .marchid, .mimpid, .mconfigptr => {
+                return 0;
+            },
+            .mhartid => {
+                return self.hardware_thread_id;
+            },
+            .mstatus => {
+                log.debug("[CSR.READ] mstatus read {}", .{self.reg_mstatus});
+                return @bitCast(self.reg_mstatus);
+            },
+            .misa => {
+                log.debug("[CSR.READ] misa read {}", .{RegMisa{}});
+                return @bitCast(RegMisa{});
+            },
+            .medeleg, .mideleg => {
+                log.debug("Machine trap delegation is not supported", .{});
+                return 0;
+            },
+            .mie => {
+                log.debug("[CSR.READ] mie read {}", .{self.reg_mie});
+                return @bitCast(self.reg_mie);
+            },
+            .mtvec => {
+                log.debug("[CSR.READ] mtvec read {}", .{self.reg_mtvec});
+                return @bitCast(self.reg_mtvec);
+            },
+            .mscratch => {
+                log.debug("[CSR.READ] mscrath read 0x{x}", .{self.reg_mscratch});
+                return self.reg_mscratch;
+            },
+            .mepc => {
+                log.debug("[CSR.READ] mepc read 0x{x}", .{self.reg_mepc});
+                return self.reg_mepc;
+            },
+            .mtval => {
+                log.debug("[CSR.READ] mtval read 0x{x}", .{self.reg_mtval});
+                return self.reg_mtval;
+            },
+            .mcause => {
+                log.debug("[CSR.READ] mcause read {}", .{self.reg_mcause});
+                return @bitCast(self.reg_mcause);
+            },
+            // zig fmt: off
+            .pmpcfg0,  .pmpcfg1,  .pmpcfg2,  .pmpcfg3,
+            .pmpcfg4,  .pmpcfg5,  .pmpcfg6,  .pmpcfg7,
+            .pmpcfg8,  .pmpcfg9,  .pmpcfg10, .pmpcfg11,
+            .pmpcfg12, .pmpcfg13, .pmpcfg14, .pmpcfg15,
+            // zig fmt: on
+            => {
+                const idx_base = (csr - @intFromEnum(Registers.pmpcfg0)) * 4;
+                return std.math.shl(u32, @as(u8, @bitCast(self.reg_pmpcfg[idx_base + 3])), 24) |
+                    std.math.shl(u32, @as(u8, @bitCast(self.reg_pmpcfg[idx_base + 2])), 16) |
+                    std.math.shl(u32, @as(u8, @bitCast(self.reg_pmpcfg[idx_base + 1])), 8) |
+                    @as(u8, @bitCast(self.reg_pmpcfg[idx_base]));
+            },
+            // zig fmt: off
+            .pmpaddr0,  .pmpaddr1,  .pmpaddr2,  .pmpaddr3,  .pmpaddr4,  .pmpaddr5,  .pmpaddr6,  .pmpaddr7,
+            .pmpaddr8,  .pmpaddr9,  .pmpaddr10, .pmpaddr11, .pmpaddr12, .pmpaddr13, .pmpaddr14, .pmpaddr15,
+            .pmpaddr16, .pmpaddr17, .pmpaddr18, .pmpaddr19, .pmpaddr20, .pmpaddr21, .pmpaddr22, .pmpaddr23,
+            .pmpaddr24, .pmpaddr25, .pmpaddr26, .pmpaddr27, .pmpaddr28, .pmpaddr29, .pmpaddr30, .pmpaddr31,
+            .pmpaddr32, .pmpaddr33, .pmpaddr34, .pmpaddr35, .pmpaddr36, .pmpaddr37, .pmpaddr38, .pmpaddr39,
+            .pmpaddr40, .pmpaddr41, .pmpaddr42, .pmpaddr43, .pmpaddr44, .pmpaddr45, .pmpaddr46, .pmpaddr47,
+            .pmpaddr48, .pmpaddr49, .pmpaddr50, .pmpaddr51, .pmpaddr52, .pmpaddr53, .pmpaddr54, .pmpaddr55,
+            .pmpaddr56, .pmpaddr57, .pmpaddr58, .pmpaddr59, .pmpaddr60, .pmpaddr61, .pmpaddr62, .pmpaddr63,
+            // zig fmt: on
+            => {
+                const val = self.reg_pmpaddr[csr - @intFromEnum(Registers.pmpaddr0)];
+                log.debug("[CSR.READ] {} read 0x{x}", .{ c, val });
+                return val;
+            },
+            .mnscratch, .mnepc, .mncause, .mnstatus => {
+                log.err("Smrnmi extension is not supported", .{});
+                return 0;
+            },
+            .satp => {
+                log.err("Supervisor mode is not supported", .{});
+                return 0;
+            },
+            else => {
+                log.warn("TODO: read from CSR {} (0x{x}) is not handled", .{ c, csr });
+                return 0;
+            },
+        }
+    }
+
+    fn check_writable(csr: u12) CPUError!void {
+        if (csr >> 10 == 0b11) {
+            return CPUError.IllegalInstruction;
+        }
+    }
+
+    fn write(self: *Self, csr: u12, val: u32) CPUError!void {
+        const level = @as(u2, @intCast((csr >> 8) & 0x3));
+        if (level > @as(u2, @intFromEnum(self.current_level))) {
+            log.err("[CSR.READ] insufficient privilege require={} current={}", .{ @as(Self.PrivilegeLevels, @enumFromInt(level)), self.current_level });
+            return CPUError.IllegalInstruction;
+        }
+
+        const c: Registers = @enumFromInt(csr);
+        if (csr >> 10 == 0b11) {
+            // readonly csr registers
+            log.debug("CSR {} is readonly", .{c});
+            return CPUError.IllegalInstruction;
+        }
+        switch (c) {
+            .mstatus => {
+                self.reg_mstatus = @bitCast(val);
+                // Supervisor mode is not implemented
+                self.reg_mstatus.spp = 0;
+
+                // M-mode software can determine whether a privilege mode is implemented by writing that
+                // mode to MPP then reading it back.
+                // If the machine provides only U and M modes, then only a single hardware storage bit is
+                // required to represent either 00 or 11 in MPP.
+                // MPP returns only Machine or User levels
+                if (self.reg_mstatus.mpp > 0) {
+                    self.reg_mstatus.mpp = 0b11;
+                } else {
+                    self.reg_mstatus.mpp = 0b00;
+                }
+
+                // memory access for M, S, U mode is explicitly little-endian
+                self.reg_mstatush.mbe = 0;
+                self.reg_mstatush.sbe = 0;
+                self.reg_mstatus.ube = 0;
+
+                // F extension is not implemented
+                self.reg_mstatus.fs = 0;
+                // V extension is not implemented
+                self.reg_mstatus.vs = 0;
+                // F and V extensions are 0
+                self.reg_mstatus.xs = 0;
+                self.reg_mstatus.sd = 0;
+                log.debug("[CSR.WRITE] mstatus write {}", .{self.reg_mstatus});
+            },
+            .misa => {
+                log.debug("[CSR.WRITE] misa write {}", .{@as(RegMisa, @bitCast(val))});
+            },
+            .medeleg, .mideleg => {
+                log.debug("Machine trap delegation is not supported", .{});
+                return CPUError.IllegalInstruction;
+            },
+            .mie => {
+                self.reg_mie = @bitCast(val & 0x2AAAA);
+                log.debug("[CSR.WRITE] mie write {}", .{self.reg_mie});
+            },
+            .mtvec => {
+                self.reg_mtvec = @bitCast(val);
+                log.debug("[CSR.WRITE] mtvec write {}", .{self.reg_mtvec});
+            },
+            .mscratch => {
+                self.reg_mscratch = val;
+                log.debug("[CSR.WRITE] mscrath write 0x{x}", .{self.reg_mscratch});
+            },
+            .mcause => {
+                self.reg_mcause = @bitCast(val);
+                log.debug("[CSR.WRITE] mcause write {}", .{self.reg_mcause});
+            },
+            .mtval => {
+                self.reg_mtval = val;
+                log.debug("[CSR.WRITE] mtval write 0x{x}", .{self.reg_mtval});
+            },
+            .mepc => {
+                self.reg_mepc = val;
+                log.debug("[CSR.WRITE] mepc write 0x{x}", .{self.reg_mepc});
+            },
+            // zig fmt: off
+            .pmpcfg0,  .pmpcfg1,  .pmpcfg2,  .pmpcfg3,
+            .pmpcfg4,  .pmpcfg5,  .pmpcfg6,  .pmpcfg7,
+            .pmpcfg8,  .pmpcfg9,  .pmpcfg10, .pmpcfg11,
+            .pmpcfg12, .pmpcfg13, .pmpcfg14, .pmpcfg15,
+            // zig fmt: on
+            => {
+                const idx_base = (csr - @intFromEnum(Registers.pmpcfg0)) * 4;
+
+                // reserved_zero is masked.
+                // R = 0 and W = 1 is reserved.
+                const cfg0: RegPmpConfig = @bitCast(@as(u8, @intCast(val & 0x9F)));
+                if (cfg0.r == 0 and cfg0.w == 1) return CPUError.InvalidCSRState;
+
+                const cfg1: RegPmpConfig = @bitCast(@as(u8, @intCast((val >> 8) & 0x9F)));
+                if (cfg1.r == 0 and cfg1.w == 1) return CPUError.InvalidCSRState;
+
+                const cfg2: RegPmpConfig = @bitCast(@as(u8, @intCast((val >> 16) & 0x9F)));
+                if (cfg2.r == 0 and cfg2.w == 1) return CPUError.InvalidCSRState;
+
+                const cfg3: RegPmpConfig = @bitCast(@as(u8, @intCast((val >> 24) & 0x9F)));
+                if (cfg3.r == 0 and cfg3.w == 1) return CPUError.InvalidCSRState;
+
+                log.debug("[CSR.WRITE] {} write cfg0={} cfg1={} cfg2={} cfg3={}", .{ c, cfg0, cfg1, cfg2, cfg3 });
+
+                // The L bit indicates that the PMP entry is locked, i.e.,
+                // writes to the configuration register and associated address registers are ignored
+                // Additionally, if PMP entry i is locked and pmpicfg.A is set to TOR, writes to pmpaddri-1 are ignored.
+                if (self.reg_pmpcfg[idx_base].l == 0) {
+                    self.reg_pmpcfg[idx_base] = cfg0;
+                }
+                if (self.reg_pmpcfg[idx_base + 1].l == 0) {
+                    self.reg_pmpcfg[idx_base + 1] = cfg1;
+                }
+                if (self.reg_pmpcfg[idx_base + 2].l == 0) {
+                    self.reg_pmpcfg[idx_base + 2] = cfg2;
+                }
+                if (self.reg_pmpcfg[idx_base + 3].l == 0) {
+                    self.reg_pmpcfg[idx_base + 3] = cfg3;
+                }
+            },
+            // zig fmt: off
+            .pmpaddr0,  .pmpaddr1,  .pmpaddr2,  .pmpaddr3,  .pmpaddr4,  .pmpaddr5,  .pmpaddr6,  .pmpaddr7,
+            .pmpaddr8,  .pmpaddr9,  .pmpaddr10, .pmpaddr11, .pmpaddr12, .pmpaddr13, .pmpaddr14, .pmpaddr15,
+            .pmpaddr16, .pmpaddr17, .pmpaddr18, .pmpaddr19, .pmpaddr20, .pmpaddr21, .pmpaddr22, .pmpaddr23,
+            .pmpaddr24, .pmpaddr25, .pmpaddr26, .pmpaddr27, .pmpaddr28, .pmpaddr29, .pmpaddr30, .pmpaddr31,
+            .pmpaddr32, .pmpaddr33, .pmpaddr34, .pmpaddr35, .pmpaddr36, .pmpaddr37, .pmpaddr38, .pmpaddr39,
+            .pmpaddr40, .pmpaddr41, .pmpaddr42, .pmpaddr43, .pmpaddr44, .pmpaddr45, .pmpaddr46, .pmpaddr47,
+            .pmpaddr48, .pmpaddr49, .pmpaddr50, .pmpaddr51, .pmpaddr52, .pmpaddr53, .pmpaddr54, .pmpaddr55,
+            .pmpaddr56, .pmpaddr57, .pmpaddr58, .pmpaddr59, .pmpaddr60, .pmpaddr61, .pmpaddr62, .pmpaddr63,
+            // zig fmt: on
+            => {
+                const idx = csr - @intFromEnum(Registers.pmpaddr0);
+                if (self.reg_pmpcfg[idx].l == 1) {
+                    // if the PMP entry is locked, not to rewrite
+                    return;
+                }
+                if (idx < 63 and self.reg_pmpcfg[idx + 1].l == 0 and self.reg_pmpcfg[idx + 1].a == 1) {
+                    // if PMP entry i is locked and pmpicfg.A is set to TOR, writes to pmpaddri-1 are ignored.
+                    return;
+                }
+                log.debug("[CSR.WRITE] {} val=0x{x}", .{ c, val });
+                self.reg_pmpaddr[idx] = val;
+            },
+            .mnscratch, .mnepc, .mncause, .mnstatus => {
+                log.err("Smrnmi extension is not supported", .{});
+                return CPUError.IllegalInstruction;
+            },
+            .satp => {
+                log.err("Supervisor mode is not supported", .{});
+                return CPUError.IllegalInstruction;
+            },
+            else => {
+                log.warn("TODO: write to CSR {} (0x{x}) is not handled", .{ c, csr });
+            },
+        }
+    }
+
+    // phy_addr must be 4 bytes aligned
+    fn check_memory_access(self: Self, phy_addr: u34, r: bool, w: bool, x: bool) !void {
+        _ = self;
+        _ = phy_addr;
+        _ = r;
+        _ = w;
+        _ = x;
+
+        // TODO: implement this
+        return;
+    }
+};
+
 pub const CPUError = error{
     TooLargeMemoryData,
     OutOfMemoryArea,
-    IllegalInstruction,
     InvalidCSR,
     ReadOnlyCSR,
     InvalidAlignment,
     EcallInvoked,
+    InvalidCSRState,
+
+    InstructionAddressMisaligned,
+    IllegalInstruction,
+    EnvironmentBreak,
+    EnvironmentCallFromUmode,
+    EnvironmentCallFromSmode,
+    EnvironmentCallFromMmode,
 };
+
+pub fn to_exception_code(e: usize) u31 {
+    return switch (e) {
+        @intFromError(CPUError.InstructionAddressMisaligned) => 0,
+        @intFromError(CPUError.IllegalInstruction) => 2,
+        @intFromError(CPUError.EnvironmentBreak) => 3,
+        @intFromError(CPUError.EnvironmentCallFromUmode) => 8,
+        @intFromError(CPUError.EnvironmentCallFromSmode) => 9,
+        @intFromError(CPUError.EnvironmentCallFromMmode) => 11,
+        else => 0,
+    };
+}
 
 pub const CPU = struct {
     pc: WORD,
     regs: [32]WORD,
     mem: [MEMORY_SIZE >> 2]WORD,
     mem_reserves: std.AutoHashMap(WORD, void),
-
-    // CSRs
-    hardware_thread_id: u32 = 0,
-    trap_handler_base_address: WORD = 0,
-
-    const CSR_MHARTID: u12 = 0xF14; // Hardware thread ID
-    const CSR_MTVEC: u12 = 0x305; // Machine trap handler base address
-    const CSR_MNSTATUS: u12 = 0x744; // Resumale NMI status
-    const CSR_SATP: u12 = 0x180; // Supervisor address translation and protection
-    const CSR_PMPADDR0: u12 = 0x3B0; // Physical memory protection address register
-    const CSR_PMPCFG0: u12 = 0x3A0; // Physical memory protection configuration
-    const CSR_MIE: u12 = 0x304; // Machine interrupt enable register
-    const CSR_MEDELEG: u12 = 0x302; // Machine execption delegation register
-    const CSR_MIDELEG: u12 = 0x303; // Machine interrupt delegation register
-    const CSR_MSTATUS: u12 = 0x300; // Machine status register
-    const CSR_MEPC: u12 = 0x341; // Machine exception program counter
+    csr: CSR,
+    exit_on_ecall: bool = false,
 
     const Self = @This();
 
@@ -46,6 +587,7 @@ pub const CPU = struct {
             .regs = [1]WORD{0} ** 32,
             .mem = [1]WORD{0} ** (MEMORY_SIZE >> 2),
             .mem_reserves = std.AutoHashMap(WORD, void).init(allocator),
+            .csr = CSR.init(),
         };
     }
 
@@ -66,18 +608,70 @@ pub const CPU = struct {
         }
     }
 
+    pub fn mem_read_aligned(self: Self, phy_addr: u34, exec: bool) !WORD {
+        try self.csr.check_memory_access((phy_addr >> 2) << 2, true, false, exec);
+        // TODO: remove MEMORY_BASE_ADDR
+        return self.mem[(phy_addr - MEMORY_BASE_ADDR) >> 2];
+    }
+
+    pub fn mem_write_aligned(self: *Self, phy_addr: u34, val: WORD) !void {
+        try self.csr.check_memory_access((phy_addr >> 2) << 2, false, true, false);
+        self.mem[(phy_addr - MEMORY_BASE_ADDR) >> 2] = val;
+    }
+
     pub fn tick_cycle(self: *Self) !void {
+        self.tick_cycle_impl() catch |err| switch (err) {
+            CPUError.InstructionAddressMisaligned,
+            CPUError.IllegalInstruction,
+            CPUError.EnvironmentBreak,
+            CPUError.EnvironmentCallFromUmode,
+            CPUError.EnvironmentCallFromMmode,
+            => {
+                const ec = to_exception_code(@intFromError(err));
+                self.csr.reg_mcause = .{ .interrupt = 0, .exception_code = ec };
+                // trap illegal-instruction exception
+                // change level to Machine mode.
+                self.csr.reg_mstatus.mpp = @intFromEnum(self.csr.current_level);
+                self.csr.current_level = .Machine;
+
+                // When a trap is taken into M-mode, mepc is written with the virtual address of the instruction that was
+                // interrupted or that encountered the exception. Otherwise, mepc is never written by the
+                // implementation, though it may be explicitly written by software
+                self.csr.reg_mepc = self.pc;
+                switch (self.csr.reg_mtvec.mode) {
+                    0b00 => {
+                        // jump to base directly
+                        self.pc = @as(u32, self.csr.reg_mtvec.base) << 2;
+                    },
+                    0b1 => {
+                        // jump with offset provided by exception code.
+                        self.pc = (@as(u32, self.csr.reg_mtvec.base) << 2) + (4 * ec);
+                    },
+                    else => {
+                        return CPUError.InvalidCSRState;
+                    },
+                }
+                if (self.exit_on_ecall and (err == CPUError.EnvironmentCallFromUmode or err == CPUError.EnvironmentCallFromMmode)) {
+                    return CPUError.EcallInvoked;
+                }
+                log.debug("[MTRAP] Exception {} trapped. jumped to 0x{x}", .{ err, self.pc });
+            },
+            else => {
+                return err;
+            },
+        };
+    }
+
+    pub fn tick_cycle_impl(self: *Self) !void {
         if (self.pc > self.mem.len + MEMORY_BASE_ADDR) {
             return CPUError.OutOfMemoryArea;
         }
         if (self.pc & 0x3 != 0) {
-            return CPUError.InvalidAlignment;
+            return CPUError.InstructionAddressMisaligned;
         }
 
-        const inst_addr = self.pc - MEMORY_BASE_ADDR;
-
         // instructions are stored in 4 bytes aligned
-        const inst = self.mem[inst_addr >> 2];
+        const inst = try self.mem_read_aligned(self.pc, true);
         log.debug("MEM[0x{x}] INST=0b{b} (0x{x})", .{ self.pc, inst, inst });
         var ecall_exit = false;
         errdefer {
@@ -102,13 +696,10 @@ pub const CPU = struct {
                 }
                 const mem_addr = @addWithOverflow(self.read_reg(rs1), offset)[0];
 
-                // TODO: remove MEMORY_BASE_ADDR
-                const mem_real_addr = mem_addr - MEMORY_BASE_ADDR;
-                var mem_val = self.mem[mem_real_addr >> 2];
-
+                var mem_val = try self.mem_read_aligned(mem_addr, false);
                 switch (funct3) {
                     0b000, 0b100 => {
-                        switch (@as(u2, @intCast(mem_real_addr & 0x3))) {
+                        switch (@as(u2, @intCast(mem_addr & 0x3))) {
                             0b00 => mem_val &= 0xFF,
                             0b01 => mem_val = (mem_val >> 8) & 0xFF,
                             0b10 => mem_val = (mem_val >> 16) & 0xFF,
@@ -124,11 +715,13 @@ pub const CPU = struct {
                         }
                     },
                     0b001, 0b101 => {
-                        switch (@as(u2, @intCast(mem_real_addr & 0x3))) {
+                        switch (@as(u2, @intCast(mem_addr & 0x3))) {
                             0b00 => mem_val &= 0xFFFF,
                             0b01 => mem_val = (mem_val >> 8) & 0xFFFF,
                             0b10 => mem_val = (mem_val >> 16) & 0xFFFF,
-                            0b11 => mem_val = ((self.mem[(mem_real_addr >> 2) + 1] & 0xFF) << 8) | ((mem_val >> 24) & 0xFF),
+                            0b11 => {
+                                mem_val = ((try self.mem_read_aligned(mem_addr + 4, false) & 0xFF) << 8) | ((mem_val >> 24) & 0xFF);
+                            },
                         }
 
                         if (funct3 == 0b001) {
@@ -142,11 +735,11 @@ pub const CPU = struct {
                     0b010 => {
                         log.debug("LW rd={} rs1={} offset=0x{x} addr=0x{x}", .{ rd, rs1, offset, mem_addr });
 
-                        switch (@as(u2, @intCast(mem_real_addr & 0x3))) {
+                        switch (@as(u2, @intCast(mem_addr & 0x3))) {
                             0b00 => {},
-                            0b01 => mem_val = ((self.mem[(mem_real_addr >> 2) + 1] & 0xFF) << 24) | (mem_val >> 8),
-                            0b10 => mem_val = ((self.mem[(mem_real_addr >> 2) + 1] & 0xFFFF) << 16) | (mem_val >> 16),
-                            0b11 => mem_val = ((self.mem[(mem_real_addr >> 2) + 1] & 0xFFFFFF) << 8) | (mem_val >> 24),
+                            0b01 => mem_val = ((try self.mem_read_aligned(mem_addr + 4, false) & 0xFF) << 24) | (mem_val >> 8),
+                            0b10 => mem_val = ((try self.mem_read_aligned(mem_addr + 4, false) & 0xFFFF) << 16) | (mem_val >> 16),
+                            0b11 => mem_val = ((try self.mem_read_aligned(mem_addr + 4, false) & 0xFFFFFF) << 8) | (mem_val >> 24),
                         }
 
                         self.regs[rd] = mem_val;
@@ -160,52 +753,50 @@ pub const CPU = struct {
                 const offset = sign_ext((funct7 << 5) | rd, 12);
                 const mem_addr = @addWithOverflow(self.read_reg(rs1), offset)[0];
                 var rs2_val = self.read_reg(rs2);
-                // TODO: remove MEMORY_BASE_ADDR
-                const mem_real_addr = mem_addr - MEMORY_BASE_ADDR;
-                const mem_val = self.mem[mem_real_addr >> 2];
 
+                const mem_val = try self.mem_read_aligned(mem_addr, false);
                 switch (funct3) {
                     0b000 => {
                         rs2_val &= 0xFF;
                         log.debug("SB rd={} rs1={} offset=0x{x} addr=0x{x}", .{ rd, rs1, offset, mem_addr });
 
-                        switch (@as(u2, @intCast(mem_real_addr & 0x3))) {
-                            0b00 => self.mem[mem_real_addr >> 2] = (mem_val & 0xFFFFFF00) | rs2_val,
-                            0b01 => self.mem[mem_real_addr >> 2] = (mem_val & 0xFFFF00FF) | (rs2_val << 8),
-                            0b10 => self.mem[mem_real_addr >> 2] = (mem_val & 0xFF00FFFF) | (rs2_val << 16),
-                            0b11 => self.mem[mem_real_addr >> 2] = (mem_val & 0x00FFFFFF) | (rs2_val << 24),
+                        switch (@as(u2, @intCast(mem_addr & 0x3))) {
+                            0b00 => try self.mem_write_aligned(mem_addr, (mem_val & 0xFFFFFF00) | rs2_val),
+                            0b01 => try self.mem_write_aligned(mem_addr, (mem_val & 0xFFFF00FF) | (rs2_val << 8)),
+                            0b10 => try self.mem_write_aligned(mem_addr, (mem_val & 0xFF00FFFF) | (rs2_val << 16)),
+                            0b11 => try self.mem_write_aligned(mem_addr, (mem_val & 0x00FFFFFF) | (rs2_val << 24)),
                         }
                     },
                     0b001 => {
                         rs2_val &= 0xFFFF;
                         log.debug("SH rd={} rs1={} offset=0x{x} addr=0x{x}", .{ rd, rs1, offset, mem_addr });
 
-                        switch (@as(u2, @intCast(mem_real_addr & 0x3))) {
-                            0b00 => self.mem[mem_real_addr >> 2] = (mem_val & 0xFFFF0000) | rs2_val,
-                            0b01 => self.mem[mem_real_addr >> 2] = (mem_val & 0xFF0000FF) | (rs2_val << 8),
-                            0b10 => self.mem[mem_real_addr >> 2] = (mem_val & 0x0000FFFF) | (rs2_val << 16),
+                        switch (@as(u2, @intCast(mem_addr & 0x3))) {
+                            0b00 => try self.mem_write_aligned(mem_addr, (mem_val & 0xFFFF0000) | rs2_val),
+                            0b01 => try self.mem_write_aligned(mem_addr, (mem_val & 0xFF0000FF) | (rs2_val << 8)),
+                            0b10 => try self.mem_write_aligned(mem_addr, (mem_val & 0x0000FFFF) | (rs2_val << 16)),
                             0b11 => {
-                                self.mem[mem_real_addr >> 2] = (mem_val & 0x00FFFFFF) | (rs2_val << 24);
-                                self.mem[(mem_real_addr >> 2) + 1] = (self.mem[(mem_real_addr >> 2) + 1] & 0xFFFFFF00) | (rs2_val >> 8);
+                                try self.mem_write_aligned(mem_addr, (mem_val & 0x00FFFFFF) | (rs2_val << 24));
+                                try self.mem_write_aligned(mem_addr + 4, (try self.mem_read_aligned(mem_addr + 4, false) & 0xFFFFFF00) | (rs2_val >> 8));
                             },
                         }
                     },
                     0b010 => {
                         log.debug("SW rd={} rs1={} offset=0x{x} addr=0x{x}", .{ rd, rs1, offset, mem_addr });
 
-                        switch (@as(u2, @intCast(mem_real_addr & 0x3))) {
-                            0b00 => self.mem[mem_real_addr >> 2] = rs2_val,
+                        switch (@as(u2, @intCast(mem_addr & 0x3))) {
+                            0b00 => try self.mem_write_aligned(mem_addr, rs2_val),
                             0b01 => {
-                                self.mem[mem_real_addr >> 2] = (mem_val & 0x000000FF) | (rs2_val << 8);
-                                self.mem[(mem_real_addr >> 2) + 1] = (self.mem[(mem_real_addr >> 2) + 1] & 0xFFFFFF00) | (rs2_val >> 24);
+                                try self.mem_write_aligned(mem_addr, (mem_val & 0x000000FF) | (rs2_val << 8));
+                                try self.mem_write_aligned(mem_addr + 4, (try self.mem_read_aligned(mem_addr + 4, false) & 0xFFFFFF00) | (rs2_val >> 24));
                             },
                             0b10 => {
-                                self.mem[mem_real_addr >> 2] = (mem_val & 0x0000FFFF) | (rs2_val << 16);
-                                self.mem[(mem_real_addr >> 2) + 1] = (self.mem[(mem_real_addr >> 2) + 1] & 0xFFFF0000) | (rs2_val >> 16);
+                                try self.mem_write_aligned(mem_addr, (mem_val & 0x0000FFFF) | (rs2_val << 16));
+                                try self.mem_write_aligned(mem_addr + 4, (try self.mem_read_aligned(mem_addr + 4, false) & 0xFFFF0000) | (rs2_val >> 16));
                             },
                             0b11 => {
-                                self.mem[mem_real_addr >> 2] = (mem_val & 0x00FFFFFF) | (rs2_val << 24);
-                                self.mem[(mem_real_addr >> 2) + 1] = (self.mem[(mem_real_addr >> 2) + 1] & 0xFF000000) | (rs2_val >> 8);
+                                try self.mem_write_aligned(mem_addr, (mem_val & 0x00FFFFFF) | (rs2_val << 24));
+                                try self.mem_write_aligned(mem_addr + 4, (try self.mem_read_aligned(mem_addr + 4, false) & 0xFF000000) | (rs2_val >> 8));
                             },
                         }
                     },
@@ -225,8 +816,18 @@ pub const CPU = struct {
                 const imm = (imm20 << 20) | (imm19_12 << 12) | (imm11 << 11) | (imm10_1 << 1);
 
                 log.debug("JAL rd={} imm={}", .{ rd, imm });
+                const next_pc = @addWithOverflow(self.pc, imm)[0]; // adding any values including negative one
+                // validate next PC is aligned in 4 bytes.
+                if (next_pc & 0x3 != 0) {
+                    // If mtval is written with a nonzero value when a misaligned load or store causes an access-fault or
+                    // page-fault exception, then mtval will contain the virtual address of the portion of the access that
+                    // caused the fault.
+                    self.csr.reg_mtval = next_pc;
+                    return CPUError.InstructionAddressMisaligned;
+                }
+
                 self.regs[rd] = @addWithOverflow(self.pc, 4)[0];
-                self.pc = @addWithOverflow(self.pc, imm)[0]; // adding any values including negative one
+                self.pc = next_pc;
                 return;
             },
             0b1100111 => {
@@ -239,10 +840,20 @@ pub const CPU = struct {
                 }
                 log.debug("JALR rd={} rs1={} imm={}", .{ rd, rs1, imm });
                 const rs1_val = self.read_reg(rs1);
-                self.regs[rd] = self.pc + 4;
 
                 // LSB is set to zero.
-                self.pc = @addWithOverflow(rs1_val, imm)[0] & (0xFFFFFFFE);
+                const next_pc = @addWithOverflow(rs1_val, imm)[0] & (0xFFFFFFFE);
+                // validate next PC is aligned in 4 bytes.
+                if (next_pc & 0x3 != 0) {
+                    // If mtval is written with a nonzero value when a misaligned load or store causes an access-fault or
+                    // page-fault exception, then mtval will contain the virtual address of the portion of the access that
+                    // caused the fault.
+                    self.csr.reg_mtval = next_pc;
+                    return CPUError.InstructionAddressMisaligned;
+                }
+
+                self.regs[rd] = (self.pc + 4);
+                self.pc = next_pc;
                 return;
             },
             0b0110111 => {
@@ -437,8 +1048,13 @@ pub const CPU = struct {
                     },
                     0b001 => {
                         const shamt: u5 = @intCast(imm & 0x1F);
-                        log.debug("SLLI rd={} rs1={} shamt={}", .{ rd, rs1, shamt });
-                        self.regs[rd] = self.read_reg(rs1) << shamt;
+                        switch (inst >> 25) {
+                            0b0000000 => {
+                                log.debug("SLLI rd={} rs1={} shamt={}", .{ rd, rs1, shamt });
+                                self.regs[rd] = self.read_reg(rs1) << shamt;
+                            },
+                            else => return CPUError.IllegalInstruction,
+                        }
                     },
                     0b010 => {
                         log.debug("SLTI rd={} rs1={} imm={}", .{ rd, rs1, imm });
@@ -462,12 +1078,12 @@ pub const CPU = struct {
                     },
                     0b101 => {
                         const shamt: u5 = @intCast(imm & 0x1F);
-                        switch (inst >> 26) {
-                            0b000000 => {
+                        switch (inst >> 25) {
+                            0b0000000 => {
                                 log.debug("SRLI rd={} rs1={} shamt={}", .{ rd, rs1, shamt });
                                 self.regs[rd] = self.read_reg(rs1) >> shamt;
                             },
-                            0b010000 => {
+                            0b0100000 => {
                                 log.debug("SRAI rd={} rs1={} shamt={}", .{ rd, rs1, shamt });
                                 const bit_width = @bitSizeOf(WORD) - @as(WORD_BIT_WIDTH_PLUS_ONE, @intCast(shamt));
                                 self.regs[rd] = sign_ext(self.read_reg(rs1) >> shamt, bit_width);
@@ -499,56 +1115,53 @@ pub const CPU = struct {
                     imm_12 = 0xFFFF_F000;
                 }
                 const imm = imm_12 | (imm_11 << 11) | (imm_10_5 << 5) | (imm_4_1 << 1);
+                var jump = false;
                 switch (funct3) {
                     0b000 => {
                         log.debug("BEQ rs1={} rs2={} imm={}", .{ rs1, rs2, imm });
-                        if (self.read_reg(rs1) == self.read_reg(rs2)) {
-                            self.pc = @addWithOverflow(self.pc, imm)[0];
-                            return;
-                        }
+                        jump = self.read_reg(rs1) == self.read_reg(rs2);
                     },
                     0b001 => {
                         log.debug("BNE rs1={} rs2={} imm={}", .{ rs1, rs2, imm });
-                        if (self.read_reg(rs1) != self.read_reg(rs2)) {
-                            self.pc = @addWithOverflow(self.pc, imm)[0];
-                            return;
-                        }
+                        jump = self.read_reg(rs1) != self.read_reg(rs2);
                     },
                     0b100 => {
                         const rs1_val: i32 = @bitCast(self.read_reg(rs1));
                         const rs2_val: i32 = @bitCast(self.read_reg(rs2));
                         log.debug("BLT rs1={} rs2={} imm={}", .{ rs1, rs2, imm });
-                        if (rs1_val < rs2_val) {
-                            self.pc = @addWithOverflow(self.pc, imm)[0];
-                            return;
-                        }
+                        jump = rs1_val < rs2_val;
                     },
                     0b101 => {
                         const rs1_val: i32 = @bitCast(self.read_reg(rs1));
                         const rs2_val: i32 = @bitCast(self.read_reg(rs2));
                         log.debug("BGE rs1={} rs2={} imm={}", .{ rs1, rs2, imm });
-                        if (rs1_val >= rs2_val) {
-                            self.pc = @addWithOverflow(self.pc, imm)[0];
-                            return;
-                        }
+                        jump = rs1_val >= rs2_val;
                     },
                     0b110 => {
                         log.debug("BLTU rs1={} rs2={} imm={}", .{ rs1, rs2, imm });
-                        if (self.read_reg(rs1) < self.read_reg(rs2)) {
-                            self.pc = @addWithOverflow(self.pc, imm)[0];
-                            return;
-                        }
+                        jump = self.read_reg(rs1) < self.read_reg(rs2);
                     },
                     0b111 => {
                         log.debug("BGEU rs1={} rs2={} imm={}", .{ rs1, rs2, imm });
-                        if (self.read_reg(rs1) >= self.read_reg(rs2)) {
-                            self.pc = @addWithOverflow(self.pc, imm)[0];
-                            return;
-                        }
+                        jump = self.read_reg(rs1) >= self.read_reg(rs2);
                     },
                     else => {
                         return CPUError.IllegalInstruction;
                     },
+                }
+                if (jump) {
+                    const next_pc = @addWithOverflow(self.pc, imm)[0]; // adding any values including negative one
+                    // validate next PC is aligned in 4 bytes.
+                    if (next_pc & 0x3 != 0) {
+                        // If mtval is written with a nonzero value when a misaligned load or store causes an access-fault or
+                        // page-fault exception, then mtval will contain the virtual address of the portion of the access that
+                        // caused the fault.
+                        self.csr.reg_mtval = next_pc;
+                        return CPUError.InstructionAddressMisaligned;
+                    }
+
+                    self.pc = next_pc;
+                    return;
                 }
             },
             0b0001111 => {
@@ -571,42 +1184,87 @@ pub const CPU = struct {
                 if (inst == 0x73) {
                     log.debug("ECALL", .{});
                     ecall_exit = true;
-                    return CPUError.EcallInvoked;
+                    switch (self.csr.current_level) {
+                        CSR.PrivilegeLevels.Machine => return CPUError.EnvironmentCallFromMmode,
+                        CSR.PrivilegeLevels.User => return CPUError.EnvironmentCallFromUmode,
+                        else => return CPUError.IllegalInstruction,
+                    }
                 } else if (inst == 0x100073) {
                     log.debug("EBREAK", .{});
                     log.warn("TODO: implement EBREAK", .{});
+                    return CPUError.EnvironmentBreak;
                 } else {
                     switch (funct3) {
                         0b000 => {
                             if (rd == 0 and rs1 == 0 and csr == 0b001100000010) {
-                                log.debug("MRET", .{});
-                                log.warn("TODO: implement MRET", .{});
+                                // An MRET or SRET instruction is used to return from a trap in M-mode or S-mode respectively. When
+                                // executing an xRET instruction, supposing xPP holds the value y, xIE is set to xPIE; the privilege mode is
+                                // changed to y; xPIE is set to 1; and xPP is set to the least-privileged supported mode (U if U-mode is
+                                // implemented, else M). If y≠M, xRET also sets MPRV=0.
+                                const next_priv = self.csr.reg_mstatus.mpp;
+                                self.csr.reg_mstatus.mie = self.csr.reg_mstatus.mpie;
+                                self.csr.current_level = @enumFromInt(next_priv);
+                                self.csr.reg_mstatus.mpie = 1;
+                                self.csr.reg_mstatus.mpp = @intFromEnum(CSR.PrivilegeLevels.User);
+                                if (self.csr.current_level != .Machine) {
+                                    self.csr.reg_mstatus.mprv = 0;
+                                }
+                                self.pc = self.csr.reg_mepc;
+                                log.debug("MRET to 0x{x}", .{self.pc});
+                                return;
                             }
                         },
                         0b001 => {
                             log.debug("CSRRW rd={} rs1={} csr=0x{x}", .{ rd, rs1, csr });
+                            try CSR.check_writable(csr);
+                            const rs1_val = self.read_reg(rs1);
                             if (rd != 0) {
-                                const csr_val = try self.read_csr(csr);
+                                const csr_val = try self.csr.read(csr);
                                 self.regs[rd] = csr_val;
                             }
-                            try self.write_csr(csr, self.read_reg(rs1));
+                            try self.csr.write(csr, rs1_val);
                         },
                         0b010 => {
                             log.debug("CSRRS rd={} rs1={} csr=0x{x}", .{ rd, rs1, csr });
-                            const csr_val = try self.read_csr(csr);
+                            if (rs1 != 0) try CSR.check_writable(csr);
+                            const rs1_val = self.read_reg(rs1);
+                            const csr_val = try self.csr.read(csr);
                             self.regs[rd] = csr_val;
-                            if (rs1 != 0) {
-                                try self.write_csr(csr, csr_val | self.regs[rs1]);
-                            }
+                            if (rs1 != 0) try self.csr.write(csr, csr_val | rs1_val);
+                        },
+                        0b011 => {
+                            log.debug("CSRRC rd={} rs1={} csr=0x{x}", .{ rd, rs1, csr });
+                            if (rs1 != 0) try CSR.check_writable(csr);
+                            const rs1_val = self.read_reg(rs1);
+                            const csr_val = try self.csr.read(csr);
+                            self.regs[rd] = csr_val;
+                            if (rs1 != 0) try self.csr.write(csr, csr_val & (~rs1_val));
                         },
                         0b101 => {
                             const uimm = rs1;
                             log.debug("CSRRWI rd={} uimm={} csr=0x{x}", .{ rd, uimm, csr });
+                            try CSR.check_writable(csr);
                             if (rd != 0) {
-                                const csr_val = try self.read_csr(csr);
+                                const csr_val = try self.csr.read(csr);
                                 self.regs[rd] = csr_val;
                             }
-                            try self.write_csr(csr, @intCast(uimm));
+                            try self.csr.write(csr, @intCast(uimm));
+                        },
+                        0b110 => {
+                            const uimm = rs1;
+                            log.debug("CSRRSI rd={} uimm={} csr=0x{x}", .{ rd, uimm, csr });
+                            if (uimm != 0) try CSR.check_writable(csr);
+                            const csr_val = try self.csr.read(csr);
+                            self.regs[rd] = csr_val;
+                            if (uimm != 0) try self.csr.write(csr, csr_val | uimm);
+                        },
+                        0b111 => {
+                            const uimm: WORD = @intCast(rs1);
+                            log.debug("CSRRCI rd={} uimm={} csr=0x{x}", .{ rd, uimm, csr });
+                            if (uimm != 0) try CSR.check_writable(csr);
+                            const csr_val = try self.csr.read(csr);
+                            self.regs[rd] = csr_val;
+                            if (uimm != 0) try self.csr.write(csr, csr_val & (~uimm));
                         },
                         else => {
                             return CPUError.IllegalInstruction;
@@ -626,13 +1284,13 @@ pub const CPU = struct {
                         // If the address is not naturally aligned, an address-misaligned exception or an access-fault exception will be generated.
                         // The access-fault exception can be generated for a memory access that would otherwise be able to
                         // complete except for the misalignment, if the misaligned access should not be emulated
-                        const mem_real_addr = self.read_reg(rs1) - MEMORY_BASE_ADDR;
+                        const mem_addr = self.read_reg(rs1);
                         // memory address must be aligned
-                        if (mem_real_addr & 0x3 != 0) {
+                        if (mem_addr & 0x3 != 0) {
                             return CPUError.InvalidAlignment;
                         }
                         const rs2_val = self.read_reg(rs2);
-                        const mem_val = self.mem[mem_real_addr >> 2];
+                        const mem_val = try self.mem_read_aligned(mem_addr, false);
                         if (funct5 != 0b00010 and funct5 != 0b00011) {
                             // not LR.W and SC.W
                             self.regs[rd] = mem_val;
@@ -641,54 +1299,54 @@ pub const CPU = struct {
                         switch (funct5) {
                             0b00000 => {
                                 log.debug("AMOADD.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
-                                self.mem[mem_real_addr >> 2] = @addWithOverflow(mem_val, rs2_val)[0];
+                                try self.mem_write_aligned(mem_addr, @addWithOverflow(mem_val, rs2_val)[0]);
                             },
                             0b00001 => {
                                 log.debug("AMOSWAP.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
-                                self.mem[mem_real_addr >> 2] = rs2_val;
+                                try self.mem_write_aligned(mem_addr, rs2_val);
                             },
                             0b00100 => {
                                 log.debug("AMOXOR.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
-                                self.mem[mem_real_addr >> 2] = mem_val ^ rs2_val;
+                                try self.mem_write_aligned(mem_addr, mem_val ^ rs2_val);
                             },
                             0b01100 => {
                                 log.debug("AMOAND.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
-                                self.mem[mem_real_addr >> 2] = mem_val & rs2_val;
+                                try self.mem_write_aligned(mem_addr, mem_val & rs2_val);
                             },
                             0b01000 => {
                                 log.debug("AMOOR.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
-                                self.mem[mem_real_addr >> 2] = mem_val | rs2_val;
+                                try self.mem_write_aligned(mem_addr, mem_val | rs2_val);
                             },
                             0b10000 => {
                                 log.debug("AMOMIN.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
                                 if (@as(i32, @bitCast(mem_val)) < @as(i32, @bitCast(rs2_val))) {
-                                    self.mem[mem_real_addr >> 2] = mem_val;
+                                    try self.mem_write_aligned(mem_addr, mem_val);
                                 } else {
-                                    self.mem[mem_real_addr >> 2] = rs2_val;
+                                    try self.mem_write_aligned(mem_addr, rs2_val);
                                 }
                             },
                             0b10100 => {
                                 log.debug("AMOMAX.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
                                 if (@as(i32, @bitCast(mem_val)) > @as(i32, @bitCast(rs2_val))) {
-                                    self.mem[mem_real_addr >> 2] = mem_val;
+                                    try self.mem_write_aligned(mem_addr, mem_val);
                                 } else {
-                                    self.mem[mem_real_addr >> 2] = rs2_val;
+                                    try self.mem_write_aligned(mem_addr, rs2_val);
                                 }
                             },
                             0b11000 => {
                                 log.debug("AMOMINU.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
                                 if (mem_val < rs2_val) {
-                                    self.mem[mem_real_addr >> 2] = mem_val;
+                                    try self.mem_write_aligned(mem_addr, mem_val);
                                 } else {
-                                    self.mem[mem_real_addr >> 2] = rs2_val;
+                                    try self.mem_write_aligned(mem_addr, rs2_val);
                                 }
                             },
                             0b11100 => {
                                 log.debug("AMOMAXU.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
                                 if (mem_val > rs2_val) {
-                                    self.mem[mem_real_addr >> 2] = mem_val;
+                                    try self.mem_write_aligned(mem_addr, mem_val);
                                 } else {
-                                    self.mem[mem_real_addr >> 2] = rs2_val;
+                                    try self.mem_write_aligned(mem_addr, rs2_val);
                                 }
                             },
                             0b00010 => {
@@ -702,7 +1360,7 @@ pub const CPU = struct {
 
                                 // TODO: no need to sign extend?
                                 self.regs[rd] = mem_val;
-                                try self.mem_reserves.put(mem_real_addr, void{});
+                                try self.mem_reserves.put(mem_addr, void{});
                             },
                             0b00011 => {
                                 log.debug("SC.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
@@ -714,8 +1372,8 @@ pub const CPU = struct {
                                 // failure, executing an SC.W instruction invalidates any reservation held by this hart.
 
                                 // TODO: is this OK?
-                                if (self.mem_reserves.get(mem_real_addr)) |_| {
-                                    self.mem[mem_real_addr >> 2] = rs2_val;
+                                if (self.mem_reserves.get(mem_addr)) |_| {
+                                    try self.mem_write_aligned(mem_addr, rs2_val);
                                     self.regs[rd] = 0;
                                 } else {
                                     self.regs[rd] = 1;
@@ -739,97 +1397,6 @@ pub const CPU = struct {
             return 0;
         } else {
             return self.regs[rd];
-        }
-    }
-
-    fn read_csr(self: Self, csr: u12) CPUError!WORD {
-        switch (csr) {
-            CSR_MHARTID => {
-                return self.hardware_thread_id;
-            },
-            CSR_MTVEC => {
-                return self.trap_handler_base_address;
-            },
-            CSR_MNSTATUS => {
-                log.warn("TODO: implement read CSR_MNSTATUS", .{});
-                return 0;
-            },
-            CSR_SATP => {
-                log.warn("TODO: implement read CSR_SATP", .{});
-                return 0;
-            },
-            CSR_PMPADDR0 => {
-                log.warn("TODO: implement read CSR_PMPADDR0", .{});
-                return 0;
-            },
-            CSR_PMPCFG0 => {
-                log.warn("TODO: implement read CSR_PMPCFG0", .{});
-                return 0;
-            },
-            CSR_MIE => {
-                log.warn("TODO: implement read MIE", .{});
-                return 0;
-            },
-            CSR_MEDELEG => {
-                log.warn("TODO: implement read CSR_MEDELEG", .{});
-                return 0;
-            },
-            CSR_MIDELEG => {
-                log.warn("TODO: implement read CSR_MIDELEG", .{});
-                return 0;
-            },
-            CSR_MSTATUS => {
-                log.warn("TODO: implement read CSR_MSTATUS", .{});
-                return 0;
-            },
-            CSR_MEPC => {
-                log.warn("TODO: implement read CSR_MEPC", .{});
-                return 0;
-            },
-            else => {
-                return CPUError.InvalidCSR;
-            },
-        }
-    }
-
-    fn write_csr(self: *Self, csr: u12, val: u32) CPUError!void {
-        switch (csr) {
-            CSR_MHARTID => {
-                return CPUError.ReadOnlyCSR;
-            },
-            CSR_MTVEC => {
-                self.trap_handler_base_address = val;
-            },
-            CSR_MNSTATUS => {
-                log.warn("TODO: implement write CSR_MNSTATUS", .{});
-            },
-            CSR_SATP => {
-                log.warn("TODO: implement write CSR_SATP", .{});
-            },
-            CSR_PMPADDR0 => {
-                log.warn("TODO: implement write CSR_PMPADDR0", .{});
-            },
-            CSR_PMPCFG0 => {
-                log.warn("TODO: implement write CSR_PMPCFG0", .{});
-            },
-            CSR_MIE => {
-                log.warn("TODO: implement write CSR_MIE", .{});
-            },
-            CSR_MEDELEG => {
-                log.warn("TODO: implement write CSR_MEDELEG", .{});
-            },
-            CSR_MIDELEG => {
-                log.warn("TODO: implement write CSR_MIDELEG", .{});
-            },
-            CSR_MSTATUS => {
-                log.warn("TODO: implement write CSR_MSTATUS", .{});
-            },
-            CSR_MEPC => {
-                log.warn("TODO: implement write CSR_MEPC", .{});
-            },
-            else => {
-                return CPUError.InvalidCSR;
-            },
         }
     }
 };
@@ -906,6 +1473,20 @@ test "risc-v tests" {
         "rv32ua-p-amoswap_w.bin",
         "rv32ua-p-amoxor_w.bin",
         "rv32ua-p-lrsc.bin",
+        "rv32mi-p-breakpoint.bin",
+        "rv32mi-p-csr.bin",
+        "rv32mi-p-illegal.bin",
+        "rv32mi-p-lh-misaligned.bin",
+        "rv32mi-p-lw-misaligned.bin",
+        "rv32mi-p-ma_addr.bin",
+        "rv32mi-p-ma_fetch.bin",
+        "rv32mi-p-mcsr.bin",
+        "rv32mi-p-sbreak.bin",
+        "rv32mi-p-scall.bin",
+        "rv32mi-p-shamt.bin",
+        "rv32mi-p-sh-misaligned.bin",
+        "rv32mi-p-sw-misaligned.bin",
+        "rv32mi-p-zicntr.bin",
     };
     // zig fmt: on
     var test_file_buffer = [_]u8{0} ** 10000;
@@ -917,6 +1498,7 @@ test "risc-v tests" {
 
         var gpa = std.heap.GeneralPurposeAllocator(.{}){};
         var c = CPU.init(gpa.allocator());
+        c.exit_on_ecall = true;
         try c.load_memory(test_file_buffer[0..read_size], 0);
         while (true) {
             c.tick_cycle() catch |err| switch (err) {
@@ -929,6 +1511,6 @@ test "risc-v tests" {
             };
         }
 
-        try std.testing.expectEqual(0, c.read_reg(10));
+        try std.testing.expectEqual(1, c.read_reg(3));
     }
 }

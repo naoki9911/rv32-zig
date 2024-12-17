@@ -3,7 +3,7 @@ const cpu = @import("cpu.zig");
 
 pub fn main() !void {
     var test_file_buffer = [_]u8{0} ** 10000;
-    var f = try std.fs.cwd().openFile("./riscv-tests/isa/rv32ua-p-lrsc.bin", .{});
+    var f = try std.fs.cwd().openFile("./riscv-tests/isa/rv32mi-p-ma_fetch.bin", .{});
     const read_size = try f.readAll(&test_file_buffer);
     std.debug.print("test file size = {d}\n", .{read_size});
 
@@ -11,6 +11,7 @@ pub fn main() !void {
     var fba = std.heap.FixedBufferAllocator.init(&buffer);
 
     var c = cpu.CPU.init(fba.allocator());
+    c.exit_on_ecall = true;
     try c.load_memory(test_file_buffer[0..read_size], 0);
     while (true) {
         c.tick_cycle() catch |err| switch (err) {
@@ -23,8 +24,8 @@ pub fn main() !void {
         };
     }
 
-    const res_val = c.read_reg(10);
-    if (res_val == 0) {
+    const res_val = c.read_reg(3);
+    if (res_val == 1) {
         std.debug.print("OK!\n", .{});
     } else {
         std.debug.print("FAIL val={}\n", .{res_val});
