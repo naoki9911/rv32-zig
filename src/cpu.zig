@@ -554,6 +554,9 @@ pub const CPUError = error{
     InstructionAddressMisaligned,
     IllegalInstruction,
     EnvironmentBreak,
+    LoadAddressMisaligned,
+    StoreAddressMisaligned,
+    AMOAddressMisaligned,
     EnvironmentCallFromUmode,
     EnvironmentCallFromSmode,
     EnvironmentCallFromMmode,
@@ -564,6 +567,9 @@ pub fn to_exception_code(e: usize) u31 {
         @intFromError(CPUError.InstructionAddressMisaligned) => 0,
         @intFromError(CPUError.IllegalInstruction) => 2,
         @intFromError(CPUError.EnvironmentBreak) => 3,
+        @intFromError(CPUError.LoadAddressMisaligned) => 4,
+        @intFromError(CPUError.StoreAddressMisaligned) => 6,
+        @intFromError(CPUError.AMOAddressMisaligned) => 6,
         @intFromError(CPUError.EnvironmentCallFromUmode) => 8,
         @intFromError(CPUError.EnvironmentCallFromSmode) => 9,
         @intFromError(CPUError.EnvironmentCallFromMmode) => 11,
@@ -624,6 +630,9 @@ pub const CPU = struct {
             CPUError.InstructionAddressMisaligned,
             CPUError.IllegalInstruction,
             CPUError.EnvironmentBreak,
+            CPUError.LoadAddressMisaligned,
+            CPUError.StoreAddressMisaligned,
+            CPUError.AMOAddressMisaligned,
             CPUError.EnvironmentCallFromUmode,
             CPUError.EnvironmentCallFromMmode,
             => {
@@ -1287,7 +1296,7 @@ pub const CPU = struct {
                         const mem_addr = self.read_reg(rs1);
                         // memory address must be aligned
                         if (mem_addr & 0x3 != 0) {
-                            return CPUError.InvalidAlignment;
+                            return CPUError.AMOAddressMisaligned;
                         }
                         const rs2_val = self.read_reg(rs2);
                         const mem_val = try self.mem_read_aligned(mem_addr, false);
