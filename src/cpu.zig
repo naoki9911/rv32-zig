@@ -144,8 +144,21 @@ const CSR = struct {
         tcontrol = 0x7A5, // Trigger control
 
 
+        // Supervisor Trap Setup
+        sstatus    = 0x100, // SRW, Supervisor status register.
+        sie        = 0x104, // SRW, Supervisor interrupt-enable register.
+        stvec      = 0x105, // SRW, Supervisor trap handler base address.
+        scounteren = 0x106, // SRW, Supervisor counter enable.
+    
+        // Supervisor Trap Handling
+        sscratch  = 0x140,  // SRW, Scratch register for supervisor trap handlers.
+        sepc      = 0x141,  // SRW, Supervisor exception program counter.
+        scause    = 0x142,  // SRW, Supervisor trap cause.
+        stval     = 0x143,  // SRW, Supervisor bad address or instruction.
+        sip       = 0x144,  // SRW, Supervisor interrupt pending.
+        scountovf = 0xDA0,  // SRO, Supervisor count overflow.
+
         // Supervisor Protection and Translation
-        // TODO: support this
         satp = 0x180, // SRW, Supervisor address translation and protection.
         _,
     };
@@ -182,7 +195,7 @@ const CSR = struct {
         wpri2: u26 = 0,
     };
 
-    const RegMtvec = packed struct(u32) {
+    const RegTvec = packed struct(u32) {
         mode: u2 = 0,
         base: u30 = 0,
     };
@@ -194,26 +207,8 @@ const CSR = struct {
         reserved_zero: u2 = 0,
         l: u1 = 0,
     };
-    const RegMie = packed struct(u32) {
-        reserved1: u1 = 0,
-        ssie: u1 = 0,
-        reserved2: u1 = 0,
-        msie: u1 = 0,
-        reserved3: u1 = 0,
-        stie: u1 = 0,
-        reserved4: u1 = 0,
-        mtie: u1 = 0,
-        reserved5: u1 = 0,
-        seie: u1 = 0,
-        reserved6: u1 = 0,
-        meie: u1 = 0,
-        reserved7: u1 = 0,
-        lcofie: u1 = 0,
-        reserved8: u2 = 0,
-        reserved9: u16 = 0,
-    };
 
-    // RV32IMA-MU
+    // RV32IMA-MSU
     const RegMisa = packed struct(u32) {
         a: u1 = 1,
         b: u1 = 0,
@@ -233,7 +228,7 @@ const CSR = struct {
         p: u1 = 0,
         q: u1 = 0,
         r: u1 = 0,
-        s: u1 = 0,
+        s: u1 = 1,
         t: u1 = 0,
         u: u1 = 1,
         v: u1 = 0,
@@ -250,21 +245,96 @@ const CSR = struct {
         interrupt: u1,
     };
 
+    const RegMip = packed struct(u32) {
+        zero1: u1 = 0,
+        ssip: u1 = 0,
+        zero2: u1 = 0,
+        msip: u1 = 0,
+        zero3: u1 = 0,
+        stip: u1 = 0,
+        zero4: u1 = 0,
+        mtip: u1 = 0,
+        zero5: u1 = 0,
+        seip: u1 = 0,
+        zero6: u1 = 0,
+        meip: u1 = 0,
+        zero7: u1 = 0,
+        lcofip: u1 = 0,
+        zero8: u2 = 0,
+        zero9: u16 = 0,
+    };
+
+    const RegMie = packed struct(u32) {
+        zero1: u1 = 0,
+        ssie: u1 = 0,
+        zero2: u1 = 0,
+        msie: u1 = 0,
+        zero3: u1 = 0,
+        stie: u1 = 0,
+        zero4: u1 = 0,
+        mtie: u1 = 0,
+        zero5: u1 = 0,
+        seie: u1 = 0,
+        zero6: u1 = 0,
+        meie: u1 = 0,
+        zero7: u1 = 0,
+        lcofie: u1 = 0,
+        zero8: u2 = 0,
+        zero9: u16 = 0,
+    };
+
+    const RegSstatus = packed struct(u32) {
+        wpri1: u1 = 0,
+        sie: u1 = 0,
+        wpri2: u3 = 0,
+        spie: u1 = 0,
+        ube: u1 = 0,
+        wpri3: u1 = 0,
+        spp: u1 = 0,
+        vs: u2 = 0,
+        wpri4: u2 = 0,
+        fs: u2 = 0,
+        xs: u2 = 0,
+        wpri5: u1 = 0,
+        sum: u1 = 0,
+        mxr: u1 = 0,
+        wpri6: u11 = 0,
+        sd: u1 = 0,
+    };
+
+    const RegSatp = packed struct(u32) {
+        ppn: u22 = 0,
+        asid: u9 = 0,
+        mode: u1 = 0,
+    };
+
     const Self = @This();
 
     // TODO: when the core initialized, entering machine mode is fine?
     current_level: PrivilegeLevels = .Machine,
     hardware_thread_id: WORD = 0,
-    reg_mtvec: RegMtvec = .{},
+    reg_mtvec: RegTvec = .{},
     reg_mstatus: RegMstatus = .{},
     reg_mstatush: RegMstatush = .{},
     reg_pmpcfg: [64]RegPmpConfig = [1]RegPmpConfig{.{}} ** 64,
     reg_pmpaddr: [64]WORD = [1]WORD{0} ** 64,
+    reg_mip: RegMip = .{},
     reg_mie: RegMie = .{},
     reg_mepc: WORD = 0,
     reg_mscratch: WORD = 0,
     reg_mcause: RegMcause = .{ .exception_code = 0, .interrupt = 0 },
     reg_mtval: WORD = 0,
+    reg_medeleg: u64 = 0,
+    reg_mideleg: RegMip = .{},
+
+    reg_satp: RegSatp = .{},
+    reg_stvec: RegTvec = .{},
+    reg_sepc: WORD = 0,
+    reg_sscratch: WORD = 0,
+    reg_scause: RegMcause = .{ .exception_code = 0, .interrupt = 0 },
+    reg_stval: WORD = 0,
+
+    sv32_enabled: bool = false,
 
     // Machine-mode standard read-write CSRs 0x7A0-0x7BF are reserved for use by the debug system. Of
     // these CSRs, 0x7A0-0x7AF are accessible to machine mode, whereas 0x7B0-0x7BF are only visible to
@@ -299,13 +369,27 @@ const CSR = struct {
                 log.debug("[CSR.READ] misa read {}", .{RegMisa{}});
                 return @bitCast(RegMisa{});
             },
-            .medeleg, .mideleg => {
-                log.debug("Machine trap delegation is not supported", .{});
-                return 0;
+            .medeleg => {
+                const res: u32 = @intCast(self.reg_medeleg & 0xFFFFFFFF);
+                log.debug("[CSR.READ medeleg 0x{x}]", .{res});
+                return res;
+            },
+            .medelegh => {
+                const res: u32 = @intCast((self.reg_medeleg >> 32) & 0xFFFFFFFF);
+                log.debug("[CSR.READ medelegh 0x{x}]", .{res});
+                return res;
+            },
+            .mideleg => {
+                log.debug("[CSR.READ mideleg {}]", .{self.reg_mideleg});
+                return @bitCast(self.reg_mideleg);
             },
             .mie => {
                 log.debug("[CSR.READ] mie read {}", .{self.reg_mie});
                 return @bitCast(self.reg_mie);
+            },
+            .mip => {
+                log.debug("[CSR.READ] mip write {}", .{self.reg_mip});
+                return @bitCast(self.reg_mip);
             },
             .mtvec => {
                 log.debug("[CSR.READ] mtvec read {}", .{self.reg_mtvec});
@@ -359,9 +443,70 @@ const CSR = struct {
                 log.warn("Smrnmi extension is not supported", .{});
                 return 0;
             },
+            .sie => {
+                // sie is a view of mie
+                const sie = RegMie{
+                    .ssie = self.reg_mie.ssie,
+                    .stie = self.reg_mie.stie,
+                    .seie = self.reg_mie.seie,
+                    .lcofie = self.reg_mie.lcofie,
+                };
+                log.debug("[CSR.READ] sie read {}", .{sie});
+                return @bitCast(sie);
+            },
+            .stvec => {
+                log.debug("[CSR.READ] stvec read {}", .{self.reg_stvec});
+                return @bitCast(self.reg_stvec);
+            },
+            .scause => {
+                log.debug("[CSR.READ] scause read {}", .{self.reg_scause});
+                return @bitCast(self.reg_scause);
+            },
+            .stval => {
+                log.debug("[CSR.READ] stval read 0x{x}", .{self.reg_stval});
+                return self.reg_stval;
+            },
+            .sepc => {
+                log.debug("[CSR.READ] spec read 0x{x}", .{self.reg_sepc});
+                return @bitCast(self.reg_sepc);
+            },
+            .sscratch => {
+                log.debug("[CSR.READ] sscrach read 0x{x}", .{self.reg_sscratch});
+                return self.reg_sscratch;
+            },
+            .sstatus => {
+                const ss = RegSstatus{
+                    .sie = self.reg_mstatus.sie,
+                    .spie = self.reg_mstatus.spie,
+                    .ube = self.reg_mstatus.ube,
+                    .spp = self.reg_mstatus.spp,
+                    .vs = self.reg_mstatus.vs,
+                    .fs = self.reg_mstatus.fs,
+                    .xs = self.reg_mstatus.xs,
+                    .sum = self.reg_mstatus.sum,
+                    .mxr = self.reg_mstatus.mxr,
+                    .sd = self.reg_mstatus.sd,
+                };
+                log.debug("[CSR.READ] sstatus read {}", .{ss});
+                return @bitCast(ss);
+            },
+            .sip => {
+                const sip = RegMip{
+                    .ssip = self.reg_mip.ssip,
+                    .stip = self.reg_mip.stip,
+                    .seip = self.reg_mip.seip,
+                    .lcofip = self.reg_mip.lcofip,
+                };
+                log.debug("[CSR.READ] sip read {}", .{sip});
+                return @bitCast(sip);
+            },
             .satp => {
-                log.warn("Supervisor mode is not supported", .{});
-                return 0;
+                // When TVM=1, attempts to read or write the satp CSR or execute an
+                // SFENCE.VMA or SINVAL.VMA instruction while executing in S-mode will raise an illegal-instruction
+                // exception. When TVM=0, these operations are permitted in S-mode. TVM is read-only 0 when Smode is not supported.
+                if (self.reg_mstatus.tvm == 1 and self.current_level == .Supervisor) return CPUError.IllegalInstruction;
+                log.debug("[CSR.READ] satp = {}", .{self.reg_satp});
+                return @bitCast(self.reg_satp);
             },
             else => {
                 log.warn("TODO: read from CSR {} (0x{x}) is not handled", .{ c, csr });
@@ -392,19 +537,6 @@ const CSR = struct {
         switch (c) {
             .mstatus => {
                 self.reg_mstatus = @bitCast(val);
-                // Supervisor mode is not implemented
-                self.reg_mstatus.spp = 0;
-
-                // M-mode software can determine whether a privilege mode is implemented by writing that
-                // mode to MPP then reading it back.
-                // If the machine provides only U and M modes, then only a single hardware storage bit is
-                // required to represent either 00 or 11 in MPP.
-                // MPP returns only Machine or User levels
-                if (self.reg_mstatus.mpp > 0) {
-                    self.reg_mstatus.mpp = 0b11;
-                } else {
-                    self.reg_mstatus.mpp = 0b00;
-                }
 
                 // memory access for M, S, U mode is explicitly little-endian
                 self.reg_mstatush.mbe = 0;
@@ -423,13 +555,25 @@ const CSR = struct {
             .misa => {
                 log.debug("[CSR.WRITE] misa write {}", .{@as(RegMisa, @bitCast(val))});
             },
-            .medeleg, .mideleg => {
-                log.debug("Machine trap delegation is not supported", .{});
-                return CPUError.IllegalInstruction;
+            .medeleg => {
+                self.reg_medeleg = (self.reg_medeleg & 0xFFFFFFFF_00000000) | @as(u64, @intCast(val));
+                log.debug("[CSR.WRITE medeleg 0x{x}]", .{self.reg_medeleg});
+            },
+            .medelegh => {
+                self.reg_medeleg = (self.reg_medeleg & 0x00000000_FFFFFFFF) | (@as(u64, @intCast(val)) << 32);
+                log.debug("[CSR.WRITE medeleg 0x{x}]", .{self.reg_medeleg});
+            },
+            .mideleg => {
+                self.reg_mideleg = @bitCast(val);
+                log.debug("[CSR.WRITE mideleg {}]", .{self.reg_mideleg});
             },
             .mie => {
-                self.reg_mie = @bitCast(val & 0x2AAAA);
+                self.reg_mie = @bitCast(val & 0xAAA);
                 log.debug("[CSR.WRITE] mie write {}", .{self.reg_mie});
+            },
+            .mip => {
+                self.reg_mip = @bitCast(val & 0xAAA);
+                log.debug("[CSR.WRITE] mip write {}", .{self.reg_mip});
             },
             .mtvec => {
                 self.reg_mtvec = @bitCast(val);
@@ -519,9 +663,61 @@ const CSR = struct {
                 log.warn("Smrnmi extension is not supported", .{});
                 return CPUError.IllegalInstruction;
             },
+            .stvec => {
+                self.reg_stvec = @bitCast(val);
+                log.debug("[CSR.WRITE] stvec write {}", .{self.reg_stvec});
+            },
+            .sie => {
+                const sie: RegMie = @bitCast(val);
+                self.reg_mie.ssie = sie.ssie;
+                self.reg_mie.stie = sie.stie;
+                self.reg_mie.seie = sie.seie;
+                self.reg_mie.lcofie = sie.lcofie;
+                log.debug("[CSR.WRITE] sie write {}", .{self.reg_mie});
+            },
+            .sepc => {
+                self.reg_sepc = val;
+                log.debug("[CSR.WRITE] sepc write 0x{x}", .{self.reg_sepc});
+            },
+            .scause => {
+                self.reg_scause = @bitCast(val);
+                log.debug("[CSR.WRITE] scause write {}", .{self.reg_scause});
+            },
+            .stval => {
+                self.reg_stval = val;
+                log.debug("[CSR.WRITE] stval write 0x{x}", .{self.reg_stval});
+            },
+            .sscratch => {
+                self.reg_sscratch = val;
+                log.debug("[CSR.WRITE] sscrach write 0x{x}", .{self.reg_sscratch});
+            },
+            .sip => {
+                const sip: RegMip = @bitCast(val);
+                self.reg_mip.ssip = sip.ssip;
+                self.reg_mip.stip = sip.stip;
+                self.reg_mip.seip = sip.seip;
+                self.reg_mip.lcofip = sip.lcofip;
+                log.debug("[CSR.WRITE] sip write {}", .{self.reg_mip});
+            },
+            .sstatus => {
+                // sstatus is a subset of mstatus
+                const ss: RegSstatus = @bitCast(val);
+                self.reg_mstatus.sie = ss.sie;
+                self.reg_mstatus.spie = ss.spie;
+                self.reg_mstatus.ube = ss.ube;
+                self.reg_mstatus.spp = ss.spp;
+                self.reg_mstatus.sum = ss.sum;
+                self.reg_mstatus.mxr = ss.mxr;
+                self.reg_mstatus.sd = ss.sd;
+
+                self.reg_mstatus.vs = 0;
+                self.reg_mstatus.fs = 0;
+                self.reg_mstatus.xs = 0;
+                log.debug("[CSR.WRITE] sstatus write {}", .{self.reg_mstatus});
+            },
             .satp => {
-                log.warn("Supervisor mode is not supported", .{});
-                return CPUError.IllegalInstruction;
+                self.reg_satp = @bitCast(val);
+                log.debug("[CSR.WRITE] satp {}", .{self.reg_satp});
             },
             else => {
                 log.warn("TODO: write to CSR {} (0x{x}) is not handled", .{ c, csr });
@@ -542,6 +738,58 @@ const CSR = struct {
     }
 };
 
+const Sv32VirtualAddress = packed struct(u32) {
+    offset: u12,
+    vpn0: u10,
+    vpn1: u10,
+};
+
+const Sv32PhysicalAddress = packed struct(u34) {
+    offset: u12 = 0,
+    ppn0: u10 = 0,
+    ppn1: u12 = 0,
+};
+
+// X W R Meaning
+// 0 0 0 Pointer to next level of page table.
+// 0 0 1 Read-only page.
+// 0 1 0 Reserved for future use.
+// 0 1 1 Read-write page.
+// 1 0 0 Execute-only page.
+// 1 0 1 Read-execute page.
+// 1 1 0 Reserved for future use.
+// 1 1 1 Read-write-execute page
+const Sv32PageTableEntry = packed struct(u32) {
+    v: u1,
+    r: u1,
+    w: u1,
+    x: u1,
+    u: u1,
+    g: u1,
+    a: u1,
+    d: u1,
+    rsw: u2,
+    ppn0: u10,
+    ppn1: u12,
+};
+
+const MemoryAccessType = enum {
+    Instruction,
+    Load,
+    Store,
+    AMO,
+
+    const Self = @This();
+    fn to_page_fault(t: Self) !void {
+        switch (t) {
+            .Instruction => return CPUError.InstructionPageFault,
+            .Load => return CPUError.LoadPageFault,
+            .Store => return CPUError.StorePageFault,
+            .AMO => return CPUError.AMOPageFault,
+        }
+    }
+};
+
 pub const CPUError = error{
     TooLargeMemoryData,
     OutOfMemoryArea,
@@ -550,6 +798,15 @@ pub const CPUError = error{
     InvalidAlignment,
     EcallInvoked,
     InvalidCSRState,
+    NotImplemented,
+
+    SupervisorSoftwareInterrupt,
+    MachineSoftwareInterrupt,
+    SupervisorTimerInterrupt,
+    MachineTimerInterrupt,
+    SupervisorExternalInterrupt,
+    MachineExternalInterrupt,
+    CounterOverflowInterrupt,
 
     InstructionAddressMisaligned,
     IllegalInstruction,
@@ -560,10 +817,19 @@ pub const CPUError = error{
     EnvironmentCallFromUmode,
     EnvironmentCallFromSmode,
     EnvironmentCallFromMmode,
+    InstructionPageFault,
+    LoadPageFault,
+    StoreAMOPageFault,
 };
 
 pub fn to_exception_code(e: usize) u31 {
     return switch (e) {
+        @intFromError(CPUError.SupervisorSoftwareInterrupt) => 1,
+        @intFromError(CPUError.MachineSoftwareInterrupt) => 3,
+        @intFromError(CPUError.SupervisorTimerInterrupt) => 5,
+        @intFromError(CPUError.MachineTimerInterrupt) => 7,
+        @intFromError(CPUError.SupervisorExternalInterrupt) => 9,
+        @intFromError(CPUError.MachineExternalInterrupt) => 11,
         @intFromError(CPUError.InstructionAddressMisaligned) => 0,
         @intFromError(CPUError.IllegalInstruction) => 2,
         @intFromError(CPUError.EnvironmentBreak) => 3,
@@ -573,6 +839,9 @@ pub fn to_exception_code(e: usize) u31 {
         @intFromError(CPUError.EnvironmentCallFromUmode) => 8,
         @intFromError(CPUError.EnvironmentCallFromSmode) => 9,
         @intFromError(CPUError.EnvironmentCallFromMmode) => 11,
+        @intFromError(CPUError.InstructionPageFault) => 12,
+        @intFromError(CPUError.LoadPageFault) => 13,
+        @intFromError(CPUError.StoreAMOPageFault) => 15,
         else => 0,
     };
 }
@@ -584,6 +853,9 @@ pub const CPU = struct {
     mem_reserves: std.AutoHashMap(WORD, void),
     csr: CSR,
     exit_on_ecall: bool = false,
+
+    excep_next_pc: WORD = 0,
+    excep_vaddr: WORD = 0,
 
     const Self = @This();
 
@@ -614,19 +886,229 @@ pub const CPU = struct {
         }
     }
 
-    pub fn mem_read_aligned(self: Self, phy_addr: u34, exec: bool) !WORD {
-        try self.csr.check_memory_access((phy_addr >> 2) << 2, true, false, exec);
-        // TODO: remove MEMORY_BASE_ADDR
-        return self.mem[(phy_addr - MEMORY_BASE_ADDR) >> 2];
+    pub fn mem_read_aligned(self: *Self, addr: u34, exec: bool) !WORD {
+        var epriv_lvl = self.csr.current_level;
+        if ((!exec) and self.csr.reg_mstatus.mprv == 1) {
+            epriv_lvl = @enumFromInt(self.csr.reg_mstatus.mpp);
+        }
+
+        std.log.debug("[MEM.READ] 0x{x} EffectivePrivilege = {}", .{ addr, epriv_lvl });
+        if (epriv_lvl == .Machine or !self.csr.sv32_enabled) {
+            try self.csr.check_memory_access((addr >> 2) << 2, true, false, exec);
+            // TODO: remove MEMORY_BASE_ADDR
+            return self.mem[(addr - MEMORY_BASE_ADDR) >> 2];
+        } else {
+            const phy_addr = try self.sv32_translate_vaddr_to_paddr(@intCast(addr & (0xFFFF_FFFF)), epriv_lvl, true, false, exec);
+            return self.mem[(phy_addr - MEMORY_BASE_ADDR) >> 2];
+        }
     }
 
-    pub fn mem_write_aligned(self: *Self, phy_addr: u34, val: WORD) !void {
-        try self.csr.check_memory_access((phy_addr >> 2) << 2, false, true, false);
-        self.mem[(phy_addr - MEMORY_BASE_ADDR) >> 2] = val;
+    pub fn mem_write_aligned(self: *Self, addr: u34, val: WORD) !void {
+        var epriv_lvl = self.csr.current_level;
+        if (self.csr.reg_mstatus.mprv == 1) {
+            epriv_lvl = @enumFromInt(self.csr.reg_mstatus.mpp);
+        }
+
+        std.log.debug("[MEM.WRITE] 0x{x} EffectivePrivilege = {}", .{ addr, epriv_lvl });
+        if (epriv_lvl == .Machine or !self.csr.sv32_enabled) {
+            try self.csr.check_memory_access((addr >> 2) << 2, false, true, false);
+            self.mem[(addr - MEMORY_BASE_ADDR) >> 2] = val;
+        } else {
+            const phy_addr = try self.sv32_translate_vaddr_to_paddr(@intCast(addr & (0xFFFF_FFFF)), epriv_lvl, false, true, false);
+            self.mem[(phy_addr - MEMORY_BASE_ADDR) >> 2] = val;
+        }
+    }
+
+    // A virtual address va is translated into a physical address pa as follows:
+    // 1. Let a be satp.ppn×PAGESIZE, and let i=LEVELS-1. (For Sv32, PAGESIZE=2^12 and LEVELS=2.) The
+    // satp register must be active, i.e., the effective privilege mode must be S-mode or U-mode.
+    // 2. Let pte be the value of the PTE at address a+va.vpn[i]×PTESIZE. (For Sv32, PTESIZE=4.) If
+    // accessing pte violates a PMA or PMP check, raise an access-fault exception corresponding to the
+    // original access type.
+    // 3. If pte.v=0, or if pte.r=0 and pte.w=1, or if any bits or encodings that are reserved for future standard
+    // use are set within pte, stop and raise a page-fault exception corresponding to the original access
+    // type.
+    // 4. Otherwise, the PTE is valid. If pte.r=1 or pte.x=1, go to step 5. Otherwise, this PTE is a pointer to the
+    // next level of the page table. Let i=i-1. If i<0, stop and raise a page-fault exception corresponding to
+    // the original access type. Otherwise, let a=pte.ppn×PAGESIZE and go to step 2.
+    // 5. A leaf PTE has been found. Determine if the requested memory access is allowed by the pte.r, pte.w,
+    // pte.x, and pte.u bits, given the current privilege mode and the value of the SUM and MXR fields of
+    // the mstatus register. If not, stop and raise a page-fault exception corresponding to the original
+    // access type.
+    // 6. If i>0 and pte.ppn[i-1:0] ≠ 0, this is a misaligned superpage; stop and raise a page-fault exception
+    // corresponding to the original access type.
+    // 7. If pte.a=0, or if the original memory access is a store and pte.d=0:
+    // ◦ If the Svade extension is implemented, stop and raise a page-fault exception corresponding to
+    // the original access type.
+    // ◦ If a store to pte would violate a PMA or PMP check, raise an access-fault exception
+    // corresponding to the original access type.
+    // ◦ Perform the following steps atomically:
+    // ▪ Compare pte to the value of the PTE at address a+va.vpn[i]×PTESIZE.
+    // ▪ If the values match, set pte.a to 1 and, if the original memory access is a store, also set pte.d
+    // to 1.
+    // ▪ If the comparison fails, return to step 2.
+    // 8. The translation is successful. The translated physical address is given as follows:
+    // ◦ pa.pgoff = va.pgoff.
+    // ◦ If i>0, then this is a superpage translation and pa.ppn[i-1:0] = va.vpn[i-1:0].
+    // ◦ pa.ppn[LEVELS-1:i] = pte.ppn[LEVELS-1:i].
+    // The results of implicit address-translation reads in step 2 may be held in a read-only, incoherent
+    // address-translation cache but not shared with other harts. The address-translation cache may hold an
+    // arbitrary number of entries, including an arbitrary number of entries for the same address and ASID.
+    // Entries in the address-translation cache may then satisfy subsequent step 2 reads if the ASID
+    // associated with the entry matches the ASID loaded in step 0 or if the entry is associated with a global
+    // mapping. To ensure that implicit reads observe writes to the same memory locations, an
+    // SFENCE.VMA instruction must be executed after the writes to flush the relevant cached translations.
+    // The address-translation cache cannot be used in step 7; accessed and dirty bits may only be updated in
+    // memory directly.
+    pub fn sv32_translate_vaddr_to_paddr(self: *Self, vaddr: u32, priv_lvl: CSR.PrivilegeLevels, read: bool, write: bool, exec: bool) !u34 {
+        // step. 0
+        const vaddr_sv32 = @as(Sv32VirtualAddress, @bitCast(vaddr));
+
+        // step. 1
+        // 1. Let a be satp.ppn×PAGESIZE, and let i=LEVELS-1. (For Sv32, PAGESIZE=2^12 and LEVELS=2.) The
+        // satp register must be active, i.e., the effective privilege mode must be S-mode or U-mode.
+        var a = @as(u34, @intCast(self.csr.reg_satp.ppn)) * 4096;
+        var i: usize = 2 - 1;
+
+        while (true) {
+            // step. 2
+            // 2. Let pte be the value of the PTE at address a+va.vpn[i]×PTESIZE. (For Sv32, PTESIZE=4.) If
+            // accessing pte violates a PMA or PMP check, raise an access-fault exception corresponding to the original access type.
+            var pte_addr: u34 = 0;
+            if (i == 1) {
+                pte_addr = a + @as(u34, @intCast(vaddr_sv32.vpn1)) * 4;
+            } else {
+                pte_addr = a + @as(u34, @intCast(vaddr_sv32.vpn0)) * 4;
+            }
+            // TODO: handle this
+            try self.csr.check_memory_access(pte_addr, read, write, exec);
+            var pte = @as(Sv32PageTableEntry, @bitCast(self.mem[(pte_addr - MEMORY_BASE_ADDR) >> 2]));
+            log.debug("PTE = {}", .{pte});
+
+            // X W R Meaning
+            // 0 0 0 Pointer to next level of page table.
+            // 0 0 1 Read-only page.
+            // 0 1 0 Reserved for future use.
+            // 0 1 1 Read-write page.
+            // 1 0 0 Execute-only page.
+            // 1 0 1 Read-execute page.
+            // 1 1 0 Reserved for future use.
+            // 1 1 1 Read-write-execute page
+            // step. 3
+            // 3. If pte.v=0, or if pte.r=0 and pte.w=1, or if any bits or encodings that are reserved for future standard
+            // use are set within pte, stop and raise a page-fault exception corresponding to the original access type.
+            if (pte.v == 0 or (pte.r == 0 and pte.w == 1)) {
+                if (exec) return CPUError.InstructionPageFault;
+                if (write) return CPUError.StoreAMOPageFault;
+                if (read) return CPUError.LoadPageFault;
+            }
+
+            // step. 4
+            // 4. Otherwise, the PTE is valid. If pte.r=1 or pte.x=1, go to step 5. Otherwise, this PTE is a pointer to the
+            // next level of the page table. Let i=i-1. If i<0, stop and raise a page-fault exception corresponding to
+            // the original access type. Otherwise, let a=pte.ppn×PAGESIZE and go to step 2.
+            if (!(pte.r == 1 or pte.x == 1)) {
+                i = i - 1;
+                if (i < 0) {
+                    if (exec) return CPUError.InstructionPageFault;
+                    if (write) return CPUError.StoreAMOPageFault;
+                    if (read) return CPUError.LoadPageFault;
+                }
+                const ppn: u34 = @as(u34, @intCast(@as(u22, @intCast(pte.ppn1)) << 10 | pte.ppn0));
+                a = ppn * 4096;
+                continue;
+            } else {
+                // step. 5
+                // 5. A leaf PTE has been found. Determine if the requested memory access is allowed by the pte.r, pte.w,
+                // pte.x, and pte.u bits, given the current privilege mode and the value of the SUM and MXR fields of
+                // the mstatus register. If not, stop and raise a page-fault exception corresponding to the original
+                // access type.
+
+                // The SUM (permit Supervisor User Memory access) bit modifies the privilege with which S-mode loads
+                // and stores access virtual memory. When SUM=0, S-mode memory accesses to pages that are
+                // accessible by U-mode (U=1 in Figure 59) will fault. When SUM=1, these accesses are permitted.
+                if ((priv_lvl == .User and pte.u != 1) or (priv_lvl == .Supervisor and self.csr.reg_mstatus.sum == 0 and pte.u == 1)) {
+                    if (exec) return CPUError.InstructionPageFault;
+                    if (write) return CPUError.StoreAMOPageFault;
+                    if (read) return CPUError.LoadPageFault;
+                }
+
+                if (exec and !(pte.r == 1 and pte.x == 1)) return CPUError.InstructionPageFault;
+                if (write and !(pte.w == 1 and pte.r == 1)) return CPUError.StoreAMOPageFault;
+                if (read and !(pte.r == 1)) {
+                    // The MXR (Make eXecutable Readable) bit modifies the privilege with which loads access virtual
+                    // memory. When MXR=0, only loads from pages marked readable (R=1 in Figure 59) will succeed.
+                    // When MXR=1, loads from pages marked either readable or executable (R=1 or X=1) will succeed. MXR
+                    // has no effect when page-based virtual memory is not in effect. MXR is read-only 0 if S-mode is not
+                    // supported.
+                    if (!(self.csr.reg_mstatus.mxr == 1 and pte.x == 1)) return CPUError.LoadPageFault;
+                }
+
+                // step. 6
+                // 6. If i>0 and pte.ppn[i-1:0] ≠ 0, this is a misaligned superpage; stop and raise a page-fault exception
+                // corresponding to the original access type.
+                if (i > 0) {
+                    // only i=1 can happen.
+                    if (pte.ppn0 != 0) {
+                        if (exec) return CPUError.InstructionPageFault;
+                        if (write) return CPUError.StoreAMOPageFault;
+                        if (read) return CPUError.LoadPageFault;
+                    }
+                }
+
+                // step. 7
+                // 7. If pte.a=0, or if the original memory access is a store and pte.d=0:
+                // ◦ If the Svade extension is implemented, stop and raise a page-fault exception corresponding to
+                // the original access type.
+                // ◦ If a store to pte would violate a PMA or PMP check, raise an access-fault exception
+                // corresponding to the original access type.
+                // ◦ Perform the following steps atomically:
+                // ▪ Compare pte to the value of the PTE at address a+va.vpn[i]×PTESIZE.
+                // ▪ If the values match, set pte.a to 1 and, if the original memory access is a store, also set pte.d
+                // to 1.
+                // ▪ If the comparison fails, return to step 2.
+                if (pte.a == 0 or (write and pte.d == 0)) {
+                    // TODO: handle error
+                    try self.csr.check_memory_access(pte_addr, read, write, exec);
+
+                    // we ensure the PTE is not modified by others
+                    pte.a = 1;
+                    if (write) pte.d = 1;
+
+                    self.mem[(pte_addr - MEMORY_BASE_ADDR) >> 2] = @bitCast(pte);
+                }
+
+                // 8. The translation is successful. The translated physical address is given as follows:
+                // ◦ pa.pgoff = va.pgoff.
+                // ◦ If i>0, then this is a superpage translation and pa.ppn[i-1:0] = va.vpn[i-1:0].
+                // ◦ pa.ppn[LEVELS-1:i] = pte.ppn[LEVELS-1:i].
+                var pa = Sv32PhysicalAddress{
+                    .offset = vaddr_sv32.offset,
+                };
+                if (i > 0) {
+                    // i = 1
+                    pa.ppn0 = vaddr_sv32.vpn0;
+                } else {
+                    pa.ppn0 = pte.ppn0;
+                }
+                pa.ppn1 = pte.ppn1;
+
+                const phy_addr: u34 = @bitCast(pa);
+                std.log.debug("[Sv32] VA: 0x{x} -> PA: 0x{x}", .{ vaddr, phy_addr });
+                return phy_addr;
+            }
+        }
     }
 
     pub fn tick_cycle(self: *Self) !void {
         self.tick_cycle_impl() catch |err| switch (err) {
+            CPUError.SupervisorSoftwareInterrupt,
+            CPUError.MachineSoftwareInterrupt,
+            CPUError.SupervisorTimerInterrupt,
+            CPUError.MachineTimerInterrupt,
+            CPUError.SupervisorExternalInterrupt,
+            CPUError.MachineExternalInterrupt,
+            CPUError.CounterOverflowInterrupt,
             CPUError.InstructionAddressMisaligned,
             CPUError.IllegalInstruction,
             CPUError.EnvironmentBreak,
@@ -634,36 +1116,139 @@ pub const CPU = struct {
             CPUError.StoreAddressMisaligned,
             CPUError.AMOAddressMisaligned,
             CPUError.EnvironmentCallFromUmode,
+            CPUError.EnvironmentCallFromSmode,
             CPUError.EnvironmentCallFromMmode,
+            CPUError.InstructionPageFault,
+            CPUError.LoadPageFault,
+            CPUError.StoreAMOPageFault,
             => {
-                const ec = to_exception_code(@intFromError(err));
-                self.csr.reg_mcause = .{ .interrupt = 0, .exception_code = ec };
-                // trap illegal-instruction exception
-                // change level to Machine mode.
-                self.csr.reg_mstatus.mpp = @intFromEnum(self.csr.current_level);
-                self.csr.current_level = .Machine;
+                var intr = false;
+                switch (err) {
+                    CPUError.SupervisorSoftwareInterrupt,
+                    CPUError.MachineSoftwareInterrupt,
+                    CPUError.SupervisorTimerInterrupt,
+                    CPUError.MachineTimerInterrupt,
+                    CPUError.SupervisorExternalInterrupt,
+                    CPUError.MachineExternalInterrupt,
+                    CPUError.CounterOverflowInterrupt,
+                    => intr = true,
+                    else => intr = false,
+                }
 
-                // When a trap is taken into M-mode, mepc is written with the virtual address of the instruction that was
-                // interrupted or that encountered the exception. Otherwise, mepc is never written by the
-                // implementation, though it may be explicitly written by software
-                self.csr.reg_mepc = self.pc;
-                switch (self.csr.reg_mtvec.mode) {
-                    0b00 => {
-                        // jump to base directly
-                        self.pc = @as(u32, self.csr.reg_mtvec.base) << 2;
-                    },
-                    0b1 => {
-                        // jump with offset provided by exception code.
-                        self.pc = (@as(u32, self.csr.reg_mtvec.base) << 2) + (4 * ec);
-                    },
-                    else => {
-                        return CPUError.InvalidCSRState;
-                    },
+                const ec = to_exception_code(@intFromError(err));
+                var delegate = false;
+                if (intr) {
+                    delegate = (std.math.shr(u32, @bitCast(self.csr.reg_mideleg), ec) & 0x1) == 1;
+                } else {
+                    delegate = (std.math.shr(u64, self.csr.reg_medeleg, ec) & 0x1) == 1;
                 }
-                if (self.exit_on_ecall and (err == CPUError.EnvironmentCallFromUmode or err == CPUError.EnvironmentCallFromMmode)) {
-                    return CPUError.EcallInvoked;
+                if (self.csr.current_level != .Machine and delegate) {
+                    // When a trap is delegated to S-mode, the scause register is written with the trap cause; the sepc register
+                    // is written with the virtual address of the instruction that took the trap; the stval register is written
+                    // with an exception-specific datum; the SPP field of mstatus is written with the active privilege mode at
+                    // the time of the trap; the SPIE field of mstatus is written with the value of the SIE field at the time of
+                    // the trap; and the SIE field of mstatus is cleared. The mcause, mepc, and mtval registers and the MPP
+                    // and MPIE fields of mstatus are not written.
+
+                    self.csr.reg_scause = .{ .interrupt = @bitCast(intr), .exception_code = ec };
+
+                    switch (self.csr.current_level) {
+                        .User => self.csr.reg_mstatus.spp = 0,
+                        .Supervisor => self.csr.reg_mstatus.spp = 1,
+                        else => return CPUError.IllegalInstruction,
+                    }
+                    self.csr.current_level = .Supervisor;
+
+                    switch (err) {
+                        CPUError.InstructionAddressMisaligned,
+                        CPUError.LoadAddressMisaligned,
+                        CPUError.StoreAddressMisaligned,
+                        CPUError.AMOAddressMisaligned,
+                        => {
+                            self.csr.reg_stval = self.excep_next_pc;
+                        },
+                        CPUError.InstructionPageFault,
+                        CPUError.LoadPageFault,
+                        CPUError.StoreAMOPageFault,
+                        => {
+                            self.csr.reg_stval = self.excep_vaddr;
+                        },
+                        else => {},
+                    }
+
+                    self.csr.reg_mstatus.spie = self.csr.reg_mstatus.sie;
+                    self.csr.reg_mstatus.sie = 0;
+
+                    // When a trap is taken into M-mode, mepc is written with the virtual address of the instruction that was
+                    // interrupted or that encountered the exception. Otherwise, mepc is never written by the
+                    // implementation, though it may be explicitly written by software
+                    self.csr.reg_sepc = self.pc;
+                    switch (self.csr.reg_stvec.mode) {
+                        0b00 => {
+                            // jump to base directly
+                            self.pc = @as(u32, self.csr.reg_stvec.base) << 2;
+                        },
+                        0b1 => {
+                            // jump with offset provided by exception code.
+                            self.pc = (@as(u32, self.csr.reg_stvec.base) << 2) + (4 * ec);
+                        },
+                        else => {
+                            return CPUError.InvalidCSRState;
+                        },
+                    }
+                    if (self.exit_on_ecall and (err == CPUError.EnvironmentCallFromUmode or err == CPUError.EnvironmentCallFromSmode or err == CPUError.EnvironmentCallFromMmode)) {
+                        return CPUError.EcallInvoked;
+                    }
+                    log.debug("[STRAP] Exception {} trapped. jumped to 0x{x}", .{ err, self.pc });
+                } else {
+                    self.csr.reg_mcause = .{ .interrupt = @bitCast(intr), .exception_code = ec };
+                    // trap illegal-instruction exception
+                    // change level to Machine mode.
+                    self.csr.reg_mstatus.mpp = @intFromEnum(self.csr.current_level);
+                    self.csr.current_level = .Machine;
+
+                    switch (err) {
+                        CPUError.InstructionAddressMisaligned,
+                        CPUError.LoadAddressMisaligned,
+                        CPUError.StoreAddressMisaligned,
+                        CPUError.AMOAddressMisaligned,
+                        => {
+                            self.csr.reg_mtval = self.excep_next_pc;
+                        },
+                        CPUError.InstructionPageFault,
+                        CPUError.LoadPageFault,
+                        CPUError.StoreAMOPageFault,
+                        => {
+                            self.csr.reg_mtval = self.excep_vaddr;
+                        },
+                        else => {},
+                    }
+
+                    self.csr.reg_mstatus.mpie = self.csr.reg_mstatus.mie;
+                    self.csr.reg_mstatus.mie = 0;
+
+                    // When a trap is taken into M-mode, mepc is written with the virtual address of the instruction that was
+                    // interrupted or that encountered the exception. Otherwise, mepc is never written by the
+                    // implementation, though it may be explicitly written by software
+                    self.csr.reg_mepc = self.pc;
+                    switch (self.csr.reg_mtvec.mode) {
+                        0b00 => {
+                            // jump to base directly
+                            self.pc = @as(u32, self.csr.reg_mtvec.base) << 2;
+                        },
+                        0b1 => {
+                            // jump with offset provided by exception code.
+                            self.pc = (@as(u32, self.csr.reg_mtvec.base) << 2) + (4 * ec);
+                        },
+                        else => {
+                            return CPUError.InvalidCSRState;
+                        },
+                    }
+                    if (self.exit_on_ecall and (err == CPUError.EnvironmentCallFromUmode or err == CPUError.EnvironmentCallFromSmode or err == CPUError.EnvironmentCallFromMmode)) {
+                        return CPUError.EcallInvoked;
+                    }
+                    log.debug("[MTRAP] Exception {} trapped. jumped to 0x{x}", .{ err, self.pc });
                 }
-                log.debug("[MTRAP] Exception {} trapped. jumped to 0x{x}", .{ err, self.pc });
             },
             else => {
                 return err;
@@ -763,7 +1348,10 @@ pub const CPU = struct {
                 const mem_addr = @addWithOverflow(self.read_reg(rs1), offset)[0];
                 var rs2_val = self.read_reg(rs2);
 
-                const mem_val = try self.mem_read_aligned(mem_addr, false);
+                var mem_val: WORD = 0;
+                if (!(funct3 == 0b010 and mem_addr & 0x3 == 0x0)) {
+                    mem_val = try self.mem_read_aligned(mem_addr, false);
+                }
                 switch (funct3) {
                     0b000 => {
                         rs2_val &= 0xFF;
@@ -831,7 +1419,7 @@ pub const CPU = struct {
                     // If mtval is written with a nonzero value when a misaligned load or store causes an access-fault or
                     // page-fault exception, then mtval will contain the virtual address of the portion of the access that
                     // caused the fault.
-                    self.csr.reg_mtval = next_pc;
+                    self.excep_next_pc = next_pc;
                     return CPUError.InstructionAddressMisaligned;
                 }
 
@@ -857,7 +1445,7 @@ pub const CPU = struct {
                     // If mtval is written with a nonzero value when a misaligned load or store causes an access-fault or
                     // page-fault exception, then mtval will contain the virtual address of the portion of the access that
                     // caused the fault.
-                    self.csr.reg_mtval = next_pc;
+                    self.excep_next_pc = next_pc;
                     return CPUError.InstructionAddressMisaligned;
                 }
 
@@ -1165,7 +1753,7 @@ pub const CPU = struct {
                         // If mtval is written with a nonzero value when a misaligned load or store causes an access-fault or
                         // page-fault exception, then mtval will contain the virtual address of the portion of the access that
                         // caused the fault.
-                        self.csr.reg_mtval = next_pc;
+                        self.excep_next_pc = next_pc;
                         return CPUError.InstructionAddressMisaligned;
                     }
 
@@ -1195,6 +1783,7 @@ pub const CPU = struct {
                     ecall_exit = true;
                     switch (self.csr.current_level) {
                         CSR.PrivilegeLevels.Machine => return CPUError.EnvironmentCallFromMmode,
+                        CSR.PrivilegeLevels.Supervisor => return CPUError.EnvironmentCallFromSmode,
                         CSR.PrivilegeLevels.User => return CPUError.EnvironmentCallFromUmode,
                         else => return CPUError.IllegalInstruction,
                     }
@@ -1210,17 +1799,81 @@ pub const CPU = struct {
                                 // executing an xRET instruction, supposing xPP holds the value y, xIE is set to xPIE; the privilege mode is
                                 // changed to y; xPIE is set to 1; and xPP is set to the least-privileged supported mode (U if U-mode is
                                 // implemented, else M). If y≠M, xRET also sets MPRV=0.
-                                const next_priv = self.csr.reg_mstatus.mpp;
+                                const next_priv = @as(CSR.PrivilegeLevels, @enumFromInt(self.csr.reg_mstatus.mpp));
                                 self.csr.reg_mstatus.mie = self.csr.reg_mstatus.mpie;
-                                self.csr.current_level = @enumFromInt(next_priv);
+                                self.csr.current_level = next_priv;
                                 self.csr.reg_mstatus.mpie = 1;
                                 self.csr.reg_mstatus.mpp = @intFromEnum(CSR.PrivilegeLevels.User);
-                                if (self.csr.current_level != .Machine) {
+
+                                // An MRET or SRET instruction that changes the privilege mode to a mode less privileged than M also sets MPRV=0.
+                                if (self.csr.current_level != next_priv and self.csr.current_level != .Machine) {
                                     self.csr.reg_mstatus.mprv = 0;
                                 }
                                 self.pc = self.csr.reg_mepc;
-                                log.debug("MRET to 0x{x}", .{self.pc});
+                                log.debug("MRET to 0x{x} (Privilege Level = {})", .{ self.pc, self.csr.current_level });
                                 return;
+                            } else if (rd == 0 and rs1 == 0 and csr == 0b000100000010) {
+                                // The TSR (Trap SRET) bit is a WARL field that supports intercepting the supervisor exception return
+                                // instruction, SRET. When TSR=1, attempts to execute SRET while executing in S-mode will raise an
+                                // illegal-instruction exception. When TSR=0, this operation is permitted in S-mode. TSR is read-only 0
+                                // when S-mode is not supported.
+                                if (self.csr.current_level == .Supervisor and self.csr.reg_mstatus.tsr == 1) return CPUError.IllegalInstruction;
+
+                                const next_priv = @as(CSR.PrivilegeLevels, @enumFromInt(@as(u2, @intCast(self.csr.reg_mstatus.spp))));
+                                self.csr.reg_mstatus.sie = self.csr.reg_mstatus.spie;
+                                self.csr.current_level = next_priv;
+                                self.csr.reg_mstatus.spie = 1;
+                                self.csr.reg_mstatus.spp = 0; // PrivilegeLevels.User
+
+                                // An MRET or SRET instruction that changes the privilege mode to a mode less privileged than M also sets MPRV=0.
+                                if (self.csr.current_level != next_priv and self.csr.current_level != .Machine) {
+                                    self.csr.reg_mstatus.mprv = 0;
+                                }
+                                self.pc = self.csr.reg_sepc;
+                                log.debug("SRET to 0x{x} (Privilege Level = {})", .{ self.pc, self.csr.current_level });
+                                return;
+                            } else if (rd == 0 and rs1 == 0 and csr == 0b000100000101) {
+                                log.debug("WFI (Privilege Level = {})", .{self.csr.current_level});
+
+                                // The TW (Timeout Wait) bit is a WARL field that supports intercepting the WFI instruction (see Section 3.3.3).
+                                // When TW=0, the WFI instruction may execute in lower privilege modes when not
+                                // prevented for some other reason. When TW=1, then if WFI is executed in any less-privileged mode,
+                                // and it does not complete within an implementation-specific, bounded time limit, the WFI instruction
+                                // causes an illegal-instruction exception. An implementation may have WFI always raise an illegalinstruction exception in less-privileged modes when TW=1, even if there are pending globally-disabled
+                                // interrupts when the instruction is executed. TW is read-only 0 when there are no modes less
+                                // privileged than M
+                                if (self.csr.reg_mstatus.tw == 1 and self.csr.current_level != .Machine) {
+                                    // TODO: check timeout?
+                                    log.debug("mstatus = {}", .{self.csr.reg_mstatus});
+                                    return CPUError.IllegalInstruction;
+                                }
+
+                                // When S-mode is implemented, then executing WFI in U-mode causes an illegal-instruction exception,
+                                // unless it completes within an implementation-specific, bounded time limit. A future revision of this
+                                // specification might add a feature that allows S-mode to selectively permit WFI in U-mode. Such a
+                                // feature would only be active when TW=0.
+                                if (self.csr.current_level == .User) {
+                                    return CPUError.IllegalInstruction;
+                                }
+
+                                // Hence, a legal implementation is to simply implement the WFI instruction as a NOP
+                                // Nothing to do.
+                            } else if (funct7 == 0b0001001) {
+                                log.debug("SFENCE.VMA rs1={} rs2={}", .{ rs1, rs2 });
+                                log.debug("TODO: implement sfence.vma", .{});
+                                // When TVM=1, attempts to read or write the satp CSR or execute an
+                                // SFENCE.VMA or SINVAL.VMA instruction while executing in S-mode will raise an illegal-instruction
+                                // exception. When TVM=0, these operations are permitted in S-mode. TVM is read-only 0 when Smode is not supported.
+                                if (self.csr.current_level == .Supervisor and self.csr.reg_mstatus.tvm == 1) {
+                                    return CPUError.IllegalInstruction;
+                                }
+                                if (self.csr.reg_satp.mode == 1) {
+                                    log.debug("enabled Sv32 paging", .{});
+                                    self.csr.sv32_enabled = true;
+                                } else if (self.csr.sv32_enabled) {
+                                    log.debug("disabled Sv32 paging", .{});
+                                    self.csr.sv32_enabled = false;
+                                }
                             }
                         },
                         0b001 => {
@@ -1398,6 +2051,23 @@ pub const CPU = struct {
             else => return CPUError.IllegalInstruction,
         }
 
+        // check interrupts trapped to M-mode
+        if ((self.csr.current_level == .Machine and self.csr.reg_mstatus.mie == 1) or self.csr.current_level != .Machine) {
+            if (self.csr.reg_mip.meip == 1 and self.csr.reg_mie.meie == 1 and self.csr.reg_mideleg.meip == 0) return CPUError.MachineExternalInterrupt;
+            if (self.csr.reg_mip.msip == 1 and self.csr.reg_mie.msie == 1 and self.csr.reg_mideleg.msip == 0) return CPUError.MachineSoftwareInterrupt;
+            if (self.csr.reg_mip.mtip == 1 and self.csr.reg_mie.mtie == 1 and self.csr.reg_mideleg.mtip == 0) return CPUError.MachineTimerInterrupt;
+            if (self.csr.reg_mip.seip == 1 and self.csr.reg_mie.seie == 1 and self.csr.reg_mideleg.seip == 0) return CPUError.SupervisorExternalInterrupt;
+            if (self.csr.reg_mip.ssip == 1 and self.csr.reg_mie.ssie == 1 and self.csr.reg_mideleg.ssip == 0) return CPUError.SupervisorSoftwareInterrupt;
+            if (self.csr.reg_mip.stip == 1 and self.csr.reg_mie.stie == 1 and self.csr.reg_mideleg.stip == 0) return CPUError.SupervisorTimerInterrupt;
+        }
+
+        // check interrupts trapped to S-mode
+        if ((self.csr.current_level == .Supervisor and self.csr.reg_mstatus.sie == 1) or self.csr.current_level == .User) {
+            if (self.csr.reg_mip.seip == 1 and self.csr.reg_mie.seie == 1) return CPUError.SupervisorExternalInterrupt;
+            if (self.csr.reg_mip.ssip == 1 and self.csr.reg_mie.ssie == 1) return CPUError.SupervisorSoftwareInterrupt;
+            if (self.csr.reg_mip.stip == 1 and self.csr.reg_mie.stie == 1) return CPUError.SupervisorTimerInterrupt;
+        }
+
         self.pc += 4;
     }
 
@@ -1496,6 +2166,12 @@ test "risc-v tests" {
         "rv32mi-p-sh-misaligned.bin",
         "rv32mi-p-sw-misaligned.bin",
         "rv32mi-p-zicntr.bin",
+        "rv32si-p-csr.bin",
+        "rv32si-p-dirty.bin",
+        "rv32si-p-ma_fetch.bin",
+        "rv32si-p-sbreak.bin",
+        "rv32si-p-scall.bin",
+        "rv32si-p-wfi.bin",
     };
     // zig fmt: on
     var test_file_buffer = [_]u8{0} ** 10000;
