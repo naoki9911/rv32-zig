@@ -2227,6 +2227,16 @@ test "risc-v tests" {
         "rv32um-v-mulhu.bin",
         "rv32um-v-rem.bin",
         "rv32um-v-remu.bin",
+        "rv32ua-v-amoadd_w.bin",
+        "rv32ua-v-amoand_w.bin",
+        "rv32ua-v-amomaxu_w.bin",
+        "rv32ua-v-amomax_w.bin",
+        "rv32ua-v-amominu_w.bin",
+        "rv32ua-v-amomin_w.bin",
+        "rv32ua-v-amoor_w.bin",
+        "rv32ua-v-amoswap_w.bin",
+        "rv32ua-v-amoxor_w.bin",
+        "rv32ua-v-lrsc.bin",
     };
     // zig fmt: on
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
