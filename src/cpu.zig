@@ -2219,6 +2219,14 @@ test "risc-v tests" {
         "rv32ui-v-sw.bin",
         "rv32ui-v-xor.bin",
         "rv32ui-v-xori.bin",
+        "rv32um-v-div.bin",
+        "rv32um-v-divu.bin",
+        "rv32um-v-mul.bin",
+        "rv32um-v-mulh.bin",
+        "rv32um-v-mulhsu.bin",
+        "rv32um-v-mulhu.bin",
+        "rv32um-v-rem.bin",
+        "rv32um-v-remu.bin",
     };
     // zig fmt: on
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
