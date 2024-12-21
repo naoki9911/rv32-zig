@@ -3,7 +3,7 @@ const log = std.log;
 
 const WORD = u32;
 const WORD_BIT_WIDTH_PLUS_ONE = u6;
-const MEMORY_SIZE = 0x10000; // 64KiB
+const MEMORY_SIZE = 0x100000; // 128KiB
 const MEMORY_BASE_ADDR = 0x80000000; // riscv-tests
 
 const CSR = struct {
@@ -717,6 +717,7 @@ const CSR = struct {
             },
             .satp => {
                 self.reg_satp = @bitCast(val);
+                self.sv32_enabled = self.reg_satp.mode == 1;
                 log.debug("[CSR.WRITE] satp {}", .{self.reg_satp});
             },
             else => {
@@ -916,6 +917,12 @@ pub const CPU = struct {
         } else {
             const phy_addr = try self.sv32_translate_vaddr_to_paddr(@intCast(addr & (0xFFFF_FFFF)), epriv_lvl, false, true, false);
             self.mem[(phy_addr - MEMORY_BASE_ADDR) >> 2] = val;
+            if (phy_addr == 0x80001000 or phy_addr == 0x80001004) {
+                if (phy_addr == 0x80001000) {
+                    std.log.err("tohost = {}: {c}", .{ phy_addr - 0x80001000, @as(u8, @intCast(val & 0xFF)) });
+                }
+                self.mem[(phy_addr - MEMORY_BASE_ADDR) >> 2] = 0;
+            }
         }
     }
 
@@ -961,6 +968,13 @@ pub const CPU = struct {
     // The address-translation cache cannot be used in step 7; accessed and dirty bits may only be updated in
     // memory directly.
     pub fn sv32_translate_vaddr_to_paddr(self: *Self, vaddr: u32, priv_lvl: CSR.PrivilegeLevels, read: bool, write: bool, exec: bool) !u34 {
+        return self.sv32_translate_vaddr_to_paddr_impl(vaddr, priv_lvl, read, write, exec) catch |err| {
+            self.excep_vaddr = vaddr;
+            return err;
+        };
+    }
+
+    pub fn sv32_translate_vaddr_to_paddr_impl(self: *Self, vaddr: u32, priv_lvl: CSR.PrivilegeLevels, read: bool, write: bool, exec: bool) !u34 {
         // step. 0
         const vaddr_sv32 = @as(Sv32VirtualAddress, @bitCast(vaddr));
 
@@ -969,7 +983,7 @@ pub const CPU = struct {
         // satp register must be active, i.e., the effective privilege mode must be S-mode or U-mode.
         var a = @as(u34, @intCast(self.csr.reg_satp.ppn)) * 4096;
         var i: usize = 2 - 1;
-
+        std.log.debug("VA = {}", .{vaddr_sv32});
         while (true) {
             // step. 2
             // 2. Let pte be the value of the PTE at address a+va.vpn[i]×PTESIZE. (For Sv32, PTESIZE=4.) If
@@ -983,7 +997,7 @@ pub const CPU = struct {
             // TODO: handle this
             try self.csr.check_memory_access(pte_addr, read, write, exec);
             var pte = @as(Sv32PageTableEntry, @bitCast(self.mem[(pte_addr - MEMORY_BASE_ADDR) >> 2]));
-            log.debug("PTE = {}", .{pte});
+            log.debug("PTE at 0x{x} = {}", .{ pte_addr, pte });
 
             // X W R Meaning
             // 0 0 0 Pointer to next level of page table.
@@ -1232,7 +1246,7 @@ pub const CPU = struct {
                     // implementation, though it may be explicitly written by software
                     self.csr.reg_mepc = self.pc;
                     switch (self.csr.reg_mtvec.mode) {
-                        0b00 => {
+                        0b0 => {
                             // jump to base directly
                             self.pc = @as(u32, self.csr.reg_mtvec.base) << 2;
                         },
@@ -1257,9 +1271,6 @@ pub const CPU = struct {
     }
 
     pub fn tick_cycle_impl(self: *Self) !void {
-        if (self.pc > self.mem.len + MEMORY_BASE_ADDR) {
-            return CPUError.OutOfMemoryArea;
-        }
         if (self.pc & 0x3 != 0) {
             return CPUError.InstructionAddressMisaligned;
         }
@@ -1327,8 +1338,6 @@ pub const CPU = struct {
                         }
                     },
                     0b010 => {
-                        log.debug("LW rd={} rs1={} offset=0x{x} addr=0x{x}", .{ rd, rs1, offset, mem_addr });
-
                         switch (@as(u2, @intCast(mem_addr & 0x3))) {
                             0b00 => {},
                             0b01 => mem_val = ((try self.mem_read_aligned(mem_addr + 4, false) & 0xFF) << 24) | (mem_val >> 8),
@@ -1336,6 +1345,7 @@ pub const CPU = struct {
                             0b11 => mem_val = ((try self.mem_read_aligned(mem_addr + 4, false) & 0xFFFFFF) << 8) | (mem_val >> 24),
                         }
 
+                        log.debug("LW rd={} rs1={} offset=0x{x} addr=0x{x} val=0x{x}", .{ rd, rs1, offset, mem_addr, mem_val });
                         self.regs[rd] = mem_val;
                     },
                     else => {
@@ -1379,7 +1389,7 @@ pub const CPU = struct {
                         }
                     },
                     0b010 => {
-                        log.debug("SW rd={} rs1={} offset=0x{x} addr=0x{x}", .{ rd, rs1, offset, mem_addr });
+                        log.debug("SW rd={} rs1={} rs2={} offset=0x{x} addr=0x{x} val=0x{x}", .{ rd, rs1, rs2, offset, mem_addr, rs2_val });
 
                         switch (@as(u2, @intCast(mem_addr & 0x3))) {
                             0b00 => try self.mem_write_aligned(mem_addr, rs2_val),
@@ -1470,8 +1480,8 @@ pub const CPU = struct {
                     0b000 => {
                         switch (funct7) {
                             0b0000000 => {
-                                log.debug("ADD rd={} rs1={} rs2={}", .{ rd, rs1, rs2 });
                                 self.regs[rd] = @addWithOverflow(rs1_val, rs2_val)[0];
+                                log.debug("ADD rd={} rs1={} rs2={} (0x{x}= 0x{x} + 0x{x})", .{ rd, rs1, rs2, self.regs[rd], rs1_val, rs2_val });
                             },
                             0b0100000 => {
                                 log.debug("SUB rd={} rs1={} 0x{x} rs2={} 0x{x}", .{ rd, rs1, rs1_val, rs2, rs2_val });
@@ -1739,8 +1749,10 @@ pub const CPU = struct {
                         jump = self.read_reg(rs1) < self.read_reg(rs2);
                     },
                     0b111 => {
-                        log.debug("BGEU rs1={} rs2={} imm={}", .{ rs1, rs2, imm });
-                        jump = self.read_reg(rs1) >= self.read_reg(rs2);
+                        const rs1_val = self.read_reg(rs1);
+                        const rs2_val = self.read_reg(rs2);
+                        log.debug("BGEU rs1={}(0x{x}) rs2={}(0x{x}) imm={}", .{ rs1, rs1_val, rs2, rs2_val, imm });
+                        jump = rs1_val >= rs2_val;
                     },
                     else => {
                         return CPUError.IllegalInstruction;
@@ -1866,13 +1878,6 @@ pub const CPU = struct {
                                 // exception. When TVM=0, these operations are permitted in S-mode. TVM is read-only 0 when Smode is not supported.
                                 if (self.csr.current_level == .Supervisor and self.csr.reg_mstatus.tvm == 1) {
                                     return CPUError.IllegalInstruction;
-                                }
-                                if (self.csr.reg_satp.mode == 1) {
-                                    log.debug("enabled Sv32 paging", .{});
-                                    self.csr.sv32_enabled = true;
-                                } else if (self.csr.sv32_enabled) {
-                                    log.debug("disabled Sv32 paging", .{});
-                                    self.csr.sv32_enabled = false;
                                 }
                             }
                         },
@@ -2173,15 +2178,60 @@ test "risc-v tests" {
         "rv32si-p-scall.bin",
         "rv32si-p-wfi.bin",
     };
+    const test_v_files = [_][]const u8{
+        "rv32ui-v-add.bin",
+        "rv32ui-v-addi.bin",
+        "rv32ui-v-and.bin",
+        "rv32ui-v-andi.bin",
+        "rv32ui-v-auipc.bin",
+        "rv32ui-v-beq.bin",
+        "rv32ui-v-bge.bin",
+        "rv32ui-v-bgeu.bin",
+        "rv32ui-v-blt.bin",
+        "rv32ui-v-bltu.bin",
+        "rv32ui-v-bne.bin",
+        "rv32ui-v-fence_i.bin",
+        "rv32ui-v-jal.bin",
+        "rv32ui-v-jalr.bin",
+        "rv32ui-v-lb.bin",
+        "rv32ui-v-lbu.bin",
+        "rv32ui-v-lh.bin",
+        "rv32ui-v-lhu.bin",
+        "rv32ui-v-lui.bin",
+        "rv32ui-v-lw.bin",
+        "rv32ui-v-ma_data.bin",
+        "rv32ui-v-or.bin",
+        "rv32ui-v-ori.bin",
+        "rv32ui-v-sb.bin",
+        "rv32ui-v-sh.bin",
+        "rv32ui-v-simple.bin",
+        "rv32ui-v-sll.bin",
+        "rv32ui-v-slli.bin",
+        "rv32ui-v-slt.bin",
+        "rv32ui-v-slti.bin",
+        "rv32ui-v-sltiu.bin",
+        "rv32ui-v-sltu.bin",
+        "rv32ui-v-sra.bin",
+        "rv32ui-v-srai.bin",
+        "rv32ui-v-srl.bin",
+        "rv32ui-v-srli.bin",
+        "rv32ui-v-sub.bin",
+        "rv32ui-v-sw.bin",
+        "rv32ui-v-xor.bin",
+        "rv32ui-v-xori.bin",
+    };
     // zig fmt: on
-    var test_file_buffer = [_]u8{0} ** 10000;
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const test_dir = try std.fs.cwd().openDir("./riscv-tests/isa", .{});
     for (test_files) |test_file| {
         var f = try test_dir.openFile(test_file, .{});
-        const read_size = try f.readAll(&test_file_buffer);
+        const fstat = try f.stat();
+        var test_file_buffer = try gpa.allocator().alloc(u8, fstat.size);
+        const read_size = try f.readAll(test_file_buffer);
+        try std.testing.expectEqual(fstat.size, read_size);
+
         std.debug.print("testing {s} (size={d})\n", .{ test_file, read_size });
 
-        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
         var c = CPU.init(gpa.allocator());
         c.exit_on_ecall = true;
         try c.load_memory(test_file_buffer[0..read_size], 0);
@@ -2197,5 +2247,31 @@ test "risc-v tests" {
         }
 
         try std.testing.expectEqual(1, c.read_reg(3));
+    }
+
+    for (test_v_files) |test_file| {
+        var f = try test_dir.openFile(test_file, .{});
+        const fstat = try f.stat();
+        var test_file_buffer = try gpa.allocator().alloc(u8, fstat.size);
+        const read_size = try f.readAll(test_file_buffer);
+        try std.testing.expectEqual(fstat.size, read_size);
+
+        std.debug.print("testing {s} (size={d})\n", .{ test_file, read_size });
+
+        var c = CPU.init(gpa.allocator());
+        c.exit_on_ecall = true;
+        try c.load_memory(test_file_buffer[0..read_size], 0);
+        while (true) {
+            c.tick_cycle() catch |err| switch (err) {
+                CPUError.EcallInvoked => {
+                    break;
+                },
+                else => {
+                    return CPUError.IllegalInstruction;
+                },
+            };
+        }
+
+        try std.testing.expectEqual(1, c.read_reg(10));
     }
 }

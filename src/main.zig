@@ -2,9 +2,12 @@ const std = @import("std");
 const cpu = @import("cpu.zig");
 
 pub fn main() !void {
-    var test_file_buffer = [_]u8{0} ** 10000;
-    var f = try std.fs.cwd().openFile("./riscv-tests/isa/rv32si-p-ma_fetch.bin", .{});
-    const read_size = try f.readAll(&test_file_buffer);
+    var allocator = std.heap.GeneralPurposeAllocator(.{}){};
+    var f = try std.fs.cwd().openFile("./riscv-tests/isa/rv32ui-v-add.bin", .{});
+    const fstat = try f.stat();
+    var test_file_buffer = try allocator.allocator().alloc(u8, fstat.size);
+    defer allocator.allocator().free(test_file_buffer);
+    const read_size = try f.readAll(test_file_buffer);
     std.debug.print("test file size = {d}\n", .{read_size});
 
     var buffer: [1000]u8 = undefined;
@@ -24,7 +27,7 @@ pub fn main() !void {
         };
     }
 
-    const res_val = c.read_reg(3);
+    const res_val = c.read_reg(10);
     if (res_val == 1) {
         std.debug.print("OK!\n", .{});
     } else {
