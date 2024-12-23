@@ -1,7 +1,7 @@
 FROM mcr.microsoft.com/devcontainers/base:ubuntu24.04
 
 RUN apt update && apt upgrade -y
-RUN apt install -y jq curl
+RUN apt install -y build-essential jq curl python3 autoconf automake autotools-dev python3-pip python3-tomli libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev ninja-build git cmake libglib2.0-dev libslirp-dev
 COPY install_zig.sh /install_zig.sh
 
 USER vscode
@@ -9,7 +9,7 @@ WORKDIR /home/vscode
 
 RUN /install_zig.sh
 
-RUN curl -o toolchain.tar.gz https://static.dev.sifive.com/dev-tools/freedom-tools/v2020.12/riscv64-unknown-elf-toolchain-10.2.0-2020.12.8-x86_64-linux-ubuntu14.tar.gz
-RUN mkdir ~/.local/riscv
-RUN tar -xvf toolchain.tar.gz --strip-components 1 -C ~/.local/riscv
-RUN echo 'export PATH=$PATH:$HOME/.local/riscv/bin' >> ~/.bashrc
+RUN wget -O toolchain.tar.xz https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/2024.12.16/riscv32-elf-ubuntu-22.04-gcc-nightly-2024.12.16-nightly.tar.xz
+RUN mkdir ~/.local/riscv32
+RUN tar -xvf toolchain.tar.xz --strip-components 1 -C ~/.local/riscv32
+RUN echo 'export PATH=$PATH:$HOME/.local/riscv32/bin' >> ~/.bashrc

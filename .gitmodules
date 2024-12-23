@@ -1,3 +1,7 @@
 [submodule "riscv-tests"]
 	path = riscv-tests
 	url = https://github.com/riscv-software-src/riscv-tests
+[submodule "xv6-riscv"]
+	path = xv6-riscv
+	url = https://github.com/cpuex2019-yokyo/xv6-riscv
+	branch = riscv

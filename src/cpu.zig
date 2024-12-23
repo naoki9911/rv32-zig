@@ -800,6 +800,7 @@ pub const CPUError = error{
     EcallInvoked,
     InvalidCSRState,
     NotImplemented,
+    UARTHooked,
 
     SupervisorSoftwareInterrupt,
     MachineSoftwareInterrupt,
@@ -847,12 +848,130 @@ pub fn to_exception_code(e: usize) u31 {
     };
 }
 
+const MMIOError = error{
+    InvalidWordSize,
+    NotHooked,
+};
+
+const CLINT = struct {
+    csr: *CSR,
+    cycle_counter: u64 = 0,
+    mtime: u64 = 0,
+    mtimecmp: u64 = 0,
+
+    const Self = @This();
+    const CLINT_BASE: u32 = 0x2000000;
+    const CLINT_MSIP_ADDR: u32 = Self.CLINT_BASE;
+    const CLINT_MTIMECMP_ADDR: u32 = Self.CLINT_BASE + 0x4000;
+    const CLINT_MTIME_ADDR: u32 = Self.CLINT_BASE + 0xBFF8;
+
+    pub fn init(csr: *CSR) Self {
+        return .{
+            .csr = csr,
+        };
+    }
+
+    pub fn mem_read(self: *Self, addr: u34, word_size: usize) MMIOError!WORD {
+        if (word_size != 4) return MMIOError.InvalidWordSize;
+        switch (addr) {
+            CLINT_MTIMECMP_ADDR => return @as(WORD, @intCast(self.mtimecmp & 0xFFFF_FFFF)),
+            CLINT_MTIMECMP_ADDR + 4 => return @as(WORD, @intCast((self.mtimecmp >> 32) & 0xFFFF_FFFF)),
+            CLINT_MTIME_ADDR => return @as(WORD, @intCast(self.mtime & 0xFFFF_FFFF)),
+            CLINT_MTIME_ADDR + 4 => return @as(WORD, @intCast((self.mtime >> 32) & 0xFFFF_FFFF)),
+            else => return MMIOError.NotHooked,
+        }
+    }
+
+    pub fn mem_write(self: *Self, addr: u34, val: WORD, word_size: usize) MMIOError!void {
+        if (word_size != 4) return MMIOError.InvalidWordSize;
+        switch (addr) {
+            CLINT_MTIMECMP_ADDR => self.mtimecmp = self.mtimecmp & 0xFFFFFFFF_00000000 | val,
+            CLINT_MTIMECMP_ADDR + 4 => self.mtimecmp = (@as(u64, @intCast(val)) << 32) | self.mtimecmp & 0xFFFFFFFF,
+            CLINT_MTIME_ADDR => self.mtime = self.mtime & 0xFFFFFFFF_00000000 | val,
+            CLINT_MTIME_ADDR + 4 => self.mtime = (@as(u64, @intCast(val)) << 32) | self.mtime & 0xFFFFFFFF,
+            else => return MMIOError.NotHooked,
+        }
+    }
+
+    pub fn tick(self: *Self) void {
+        self.cycle_counter += 1;
+        if (self.cycle_counter % 100 == 0) {
+            self.mtime += 1;
+        }
+
+        if (self.mtime >= self.mtimecmp) {
+            self.csr.reg_mip.mtip = 1;
+        } else {
+            self.csr.reg_mip.mtip = 0;
+        }
+    }
+};
+
+const UART = struct {
+    csr: *CSR,
+
+    // TODO: implement TX FIFO
+    fcr: u8 = 0,
+    lcr: u8 = 0,
+    isr: u8 = 0,
+    ier: u8 = 0,
+
+    const Self = @This();
+    const UART_BASE: u32 = 0x10000000;
+
+    // http://byterunner.com/16550.html
+    const UART_RHR_ADDR: u32 = UART_BASE;
+    const UART_THR_ADDR: u32 = UART_BASE;
+    const UART_IER_ADDR: u32 = UART_BASE + 1 * 4; // intrrupt enable register
+    const UART_FCR_ADDR: u32 = UART_BASE + 2 * 4; // FIFO control register
+    const UART_ISR_ADDR: u32 = UART_BASE + 2 * 4; // interrupt status register
+    const UART_LCR_ADDR: u32 = UART_BASE + 3 * 4; // line control register
+    const UART_LSR_ADDR: u32 = UART_BASE + 5 * 4; // line status register
+
+    const FCR_FIFO_ENABLE: u32 = 1;
+    const FCR_FIFO_CLEAR: u32 = 3 << 1;
+    const LCR_EIGHT_BITS: u32 = 3;
+    const LCR_BAUD_LATCH: u32 = 1 << 7;
+    const LSR_RX_READY: u32 = 1;
+    const LSR_TX_IDLE: u32 = 1 << 5;
+
+    pub fn init(csr: *CSR) Self {
+        return .{
+            .csr = csr,
+        };
+    }
+
+    pub fn mem_read(self: *Self, addr: u34, word_size: usize) MMIOError!WORD {
+        if (word_size != 1) return MMIOError.InvalidWordSize;
+        _ = self;
+        switch (addr) {
+            UART_RHR_ADDR => return 0,
+            UART_ISR_ADDR => return 0,
+            UART_LSR_ADDR => return LSR_TX_IDLE, // TX is already idle.
+            else => return MMIOError.NotHooked,
+        }
+    }
+
+    pub fn mem_write(self: *Self, addr: u34, val: WORD, word_size: usize) MMIOError!void {
+        if (word_size != 1) return MMIOError.InvalidWordSize;
+        switch (addr) {
+            UART_THR_ADDR => std.debug.print("{c}", .{@as(u8, @intCast(val & 0xFF))}),
+            UART_IER_ADDR => self.ier = @intCast(val & 0xFF),
+            UART_FCR_ADDR => self.fcr = @intCast(val & 0xFF),
+            UART_LCR_ADDR => self.lcr = @intCast(val & 0xFF),
+            else => return MMIOError.NotHooked,
+        }
+    }
+};
+
 pub const CPU = struct {
     pc: WORD,
     regs: [32]WORD,
     mem: [MEMORY_SIZE >> 2]WORD,
     mem_reserves: std.AutoHashMap(WORD, void),
     csr: CSR,
+    clint: CLINT,
+    uart: UART,
     exit_on_ecall: bool = false,
 
     excep_next_pc: WORD = 0,
@@ -861,12 +980,17 @@ pub const CPU = struct {
     const Self = @This();
 
     pub fn init(allocator: std.mem.Allocator) Self {
+        var csr = CSR.init();
+        const clint = CLINT.init(&csr);
+        const uart = UART.init(&csr);
         return .{
             .pc = MEMORY_BASE_ADDR, // for riscv-tests
             .regs = [1]WORD{0} ** 32,
             .mem = [1]WORD{0} ** (MEMORY_SIZE >> 2),
             .mem_reserves = std.AutoHashMap(WORD, void).init(allocator),
-            .csr = CSR.init(),
+            .csr = csr,
+            .clint = clint,
+            .uart = uart,
         };
     }
 
@@ -887,7 +1011,7 @@ pub const CPU = struct {
         }
     }
 
-    pub fn mem_read_aligned(self: *Self, addr: u34, exec: bool) !WORD {
+    pub fn mem_read(self: *Self, addr: u34, exec: bool, word_size: usize) !WORD {
         var epriv_lvl = self.csr.current_level;
         if ((!exec) and self.csr.reg_mstatus.mprv == 1) {
             epriv_lvl = @enumFromInt(self.csr.reg_mstatus.mpp);
@@ -896,15 +1020,14 @@ pub const CPU = struct {
         std.log.debug("[MEM.READ] 0x{x} EffectivePrivilege = {}", .{ addr, epriv_lvl });
         if (epriv_lvl == .Machine or !self.csr.sv32_enabled) {
             try self.csr.check_memory_access((addr >> 2) << 2, true, false, exec);
-            // TODO: remove MEMORY_BASE_ADDR
-            return self.mem[(addr - MEMORY_BASE_ADDR) >> 2];
+            return try self.mem_pread(addr, exec, word_size);
         } else {
             const phy_addr = try self.sv32_translate_vaddr_to_paddr(@intCast(addr & (0xFFFF_FFFF)), epriv_lvl, true, false, exec);
-            return self.mem[(phy_addr - MEMORY_BASE_ADDR) >> 2];
+            return try self.mem_pread(phy_addr, exec, word_size);
         }
     }
 
-    pub fn mem_write_aligned(self: *Self, addr: u34, val: WORD) !void {
+    pub fn mem_write(self: *Self, addr: u34, val: WORD, word_size: usize) !void {
         var epriv_lvl = self.csr.current_level;
         if (self.csr.reg_mstatus.mprv == 1) {
             epriv_lvl = @enumFromInt(self.csr.reg_mstatus.mpp);
@@ -912,18 +1035,104 @@ pub const CPU = struct {
 
         std.log.debug("[MEM.WRITE] 0x{x} EffectivePrivilege = {}", .{ addr, epriv_lvl });
         if (epriv_lvl == .Machine or !self.csr.sv32_enabled) {
-            try self.csr.check_memory_access((addr >> 2) << 2, false, true, false);
-            self.mem[(addr - MEMORY_BASE_ADDR) >> 2] = val;
+            try self.mem_pwrite(addr, val, word_size);
         } else {
             const phy_addr = try self.sv32_translate_vaddr_to_paddr(@intCast(addr & (0xFFFF_FFFF)), epriv_lvl, false, true, false);
-            self.mem[(phy_addr - MEMORY_BASE_ADDR) >> 2] = val;
-            if (phy_addr == 0x80001000 or phy_addr == 0x80001004) {
-                if (phy_addr == 0x80001000) {
-                    std.log.err("tohost = {}: {c}", .{ phy_addr - 0x80001000, @as(u8, @intCast(val & 0xFF)) });
-                }
-                self.mem[(phy_addr - MEMORY_BASE_ADDR) >> 2] = 0;
-            }
+            try self.mem_pwrite(phy_addr, val, word_size);
         }
+    }
+
+    pub fn mem_pread(self: *Self, addr: u34, exec: bool, word_size: usize) !WORD {
+        try self.csr.check_memory_access((addr >> 2) << 2, true, false, exec);
+
+        if (self.clint.mem_read(addr, word_size)) |res| {
+            return res;
+        } else |_| {} // if not hooked, continue.
+        if (self.uart.mem_read(addr, word_size)) |res| {
+            return res;
+        } else |_| {} // if not hooked, continue.
+
+        // TODO: remove MEMORY_BASE_ADDR
+        const mem_addr = (addr - MEMORY_BASE_ADDR) >> 2;
+        const lower_addr: u2 = @intCast(addr & 0x3);
+        switch (word_size) {
+            1 => switch (lower_addr) {
+                0b00 => return self.mem[mem_addr] & 0xFF,
+                0b01 => return (self.mem[mem_addr] >> 8) & 0xFF,
+                0b10 => return (self.mem[mem_addr] >> 16) & 0xFF,
+                0b11 => return (self.mem[mem_addr] >> 24) & 0xFF,
+            },
+            2 => switch (lower_addr) {
+                0b00 => return self.mem[mem_addr] & 0xFFFF,
+                0b01 => return (self.mem[mem_addr] >> 8) & 0xFFFF,
+                0b10 => return (self.mem[mem_addr] >> 16) & 0xFFFF,
+                0b11 => return ((self.mem[mem_addr + 1] & 0xFF) << 8) | ((self.mem[mem_addr] >> 24) & 0xFF),
+            },
+            4 => switch (lower_addr) {
+                0b00 => return self.mem[mem_addr],
+                0b01 => return ((self.mem[mem_addr + 1] & 0xFF) << 24) | (self.mem[mem_addr] >> 8),
+                0b10 => return ((self.mem[mem_addr + 1] & 0xFFFF) << 16) | (self.mem[mem_addr] >> 16),
+                0b11 => return ((self.mem[mem_addr + 1] & 0xFFFFFF) << 8) | (self.mem[mem_addr] >> 24),
+            },
+            else => return MMIOError.InvalidWordSize,
+        }
+    }
+
+    pub fn mem_pwrite(self: *Self, addr: u34, val: WORD, word_size: usize) !void {
+        try self.csr.check_memory_access((addr >> 2) << 2, false, true, false);
+
+        if (self.clint.mem_write(addr, val, word_size)) {
+            return;
+        } else |_| {}
+        if (self.uart.mem_write(addr, val, word_size)) |res| {
+            return res;
+        } else |_| {} // if not hooked, continue.
+
+        // TODO: remove MEMORY_BASE_ADDR
+        const mem_addr = (addr - MEMORY_BASE_ADDR) >> 2;
+        const lower_addr: u2 = @intCast(addr & 0x3);
+        switch (word_size) {
+            1 => switch (lower_addr) {
+                0b00 => self.mem[mem_addr] = (self.mem[mem_addr] & 0xFFFFFF00) | (val & 0xFF),
+                0b01 => self.mem[mem_addr] = (self.mem[mem_addr] & 0xFFFF00FF) | ((val & 0xFF) << 8),
+                0b10 => self.mem[mem_addr] = (self.mem[mem_addr] & 0xFF00FFFF) | ((val & 0xFF) << 16),
+                0b11 => self.mem[mem_addr] = (self.mem[mem_addr] & 0x00FFFFFF) | ((val & 0xFF) << 24),
+            },
+            2 => switch (lower_addr) {
+                0b00 => self.mem[mem_addr] = (self.mem[mem_addr] & 0xFFFF0000) | (val & 0xFFFF),
+                0b01 => self.mem[mem_addr] = (self.mem[mem_addr] & 0xFF0000FF) | ((val & 0xFFFF) << 8),
+                0b10 => self.mem[mem_addr] = (self.mem[mem_addr] & 0x0000FFFF) | ((val & 0xFFFF) << 16),
+                0b11 => {
+                    self.mem[mem_addr] = (self.mem[mem_addr] & 0x00FFFFFF) | ((val & 0xFFFF) << 24);
+                    self.mem[mem_addr + 1] = (self.mem[mem_addr + 1] & 0xFFFFFF00) | ((val & 0xFFFF) >> 8);
+                },
+            },
+            4 => switch (lower_addr) {
+                0b00 => self.mem[mem_addr] = val,
+                0b01 => {
+                    self.mem[mem_addr] = (self.mem[mem_addr] & 0x000000FF) | (val << 8);
+                    self.mem[mem_addr + 1] = (self.mem[mem_addr + 1] & 0xFFFFFF00) | (val >> 24);
+                },
+                0b10 => {
+                    self.mem[mem_addr] = (self.mem[mem_addr] & 0x0000FFFF) | (val << 16);
+                    self.mem[mem_addr + 1] = (self.mem[mem_addr + 1] & 0xFFFF0000) | (val >> 16);
+                },
+                0b11 => {
+                    self.mem[mem_addr] = (self.mem[mem_addr] & 0x00FFFFFF) | (val << 24);
+                    self.mem[mem_addr + 1] = (self.mem[mem_addr + 1] & 0xFF000000) | (val >> 8);
+                },
+            },
+            else => return MMIOError.InvalidWordSize,
+        }
+
+        // for riscv-tests
+        if (addr == 0x80001000 or addr == 0x80001004) {
+            if (addr == 0x80001000) {
+                std.log.err("tohost = {}: {c}", .{ addr - 0x80001000, @as(u8, @intCast(val & 0xFF)) });
+            }
+            self.mem[mem_addr] = 0;
+        }
+        return;
     }
 
     // A virtual address va is translated into a physical address pa as follows:
@@ -1275,8 +1484,27 @@ pub const CPU = struct {
             return CPUError.InstructionAddressMisaligned;
         }
 
+        // check interrupts trapped to M-mode
+        if ((self.csr.current_level == .Machine and self.csr.reg_mstatus.mie == 1) or self.csr.current_level != .Machine) {
+            if (self.csr.reg_mip.meip == 1 and self.csr.reg_mie.meie == 1 and self.csr.reg_mideleg.meip == 0) return CPUError.MachineExternalInterrupt;
+            if (self.csr.reg_mip.msip == 1 and self.csr.reg_mie.msie == 1 and self.csr.reg_mideleg.msip == 0) return CPUError.MachineSoftwareInterrupt;
+            if (self.csr.reg_mip.mtip == 1 and self.csr.reg_mie.mtie == 1 and self.csr.reg_mideleg.mtip == 0) return CPUError.MachineTimerInterrupt;
+            if (self.csr.reg_mip.seip == 1 and self.csr.reg_mie.seie == 1 and self.csr.reg_mideleg.seip == 0) return CPUError.SupervisorExternalInterrupt;
+            if (self.csr.reg_mip.ssip == 1 and self.csr.reg_mie.ssie == 1 and self.csr.reg_mideleg.ssip == 0) return CPUError.SupervisorSoftwareInterrupt;
+            if (self.csr.reg_mip.stip == 1 and self.csr.reg_mie.stie == 1 and self.csr.reg_mideleg.stip == 0) return CPUError.SupervisorTimerInterrupt;
+        }
+
+        // check interrupts trapped to S-mode
+        if ((self.csr.current_level == .Supervisor and self.csr.reg_mstatus.sie == 1) or self.csr.current_level == .User) {
+            if (self.csr.reg_mip.seip == 1 and self.csr.reg_mie.seie == 1) return CPUError.SupervisorExternalInterrupt;
+            if (self.csr.reg_mip.ssip == 1 and self.csr.reg_mie.ssie == 1) return CPUError.SupervisorSoftwareInterrupt;
+            if (self.csr.reg_mip.stip == 1 and self.csr.reg_mie.stie == 1) return CPUError.SupervisorTimerInterrupt;
+        }
+
+        self.clint.tick();
+
         // instructions are stored in 4 bytes aligned
-        const inst = try self.mem_read_aligned(self.pc, true);
+        const inst = try self.mem_read(self.pc, true, 4);
         log.debug("MEM[0x{x}] INST=0b{b} (0x{x})", .{ self.pc, inst, inst });
         var ecall_exit = false;
         errdefer {
@@ -1301,16 +1529,9 @@ pub const CPU = struct {
                 }
                 const mem_addr = @addWithOverflow(self.read_reg(rs1), offset)[0];
 
-                var mem_val = try self.mem_read_aligned(mem_addr, false);
                 switch (funct3) {
                     0b000, 0b100 => {
-                        switch (@as(u2, @intCast(mem_addr & 0x3))) {
-                            0b00 => mem_val &= 0xFF,
-                            0b01 => mem_val = (mem_val >> 8) & 0xFF,
-                            0b10 => mem_val = (mem_val >> 16) & 0xFF,
-                            0b11 => mem_val = (mem_val >> 24) & 0xFF,
-                        }
-
+                        const mem_val = try self.mem_read(mem_addr, false, 1);
                         if (funct3 == 0b000) {
                             log.debug("LB rd={} rs1={} offset=0x{x} addr=0x{x}", .{ rd, rs1, offset, mem_addr });
                             self.regs[rd] = sign_ext(mem_val, 8);
@@ -1320,15 +1541,7 @@ pub const CPU = struct {
                         }
                     },
                     0b001, 0b101 => {
-                        switch (@as(u2, @intCast(mem_addr & 0x3))) {
-                            0b00 => mem_val &= 0xFFFF,
-                            0b01 => mem_val = (mem_val >> 8) & 0xFFFF,
-                            0b10 => mem_val = (mem_val >> 16) & 0xFFFF,
-                            0b11 => {
-                                mem_val = ((try self.mem_read_aligned(mem_addr + 4, false) & 0xFF) << 8) | ((mem_val >> 24) & 0xFF);
-                            },
-                        }
-
+                        const mem_val = try self.mem_read(mem_addr, false, 2);
                         if (funct3 == 0b001) {
                             log.debug("LH rd={} rs1={} offset=0x{x} addr=0x{x}", .{ rd, rs1, offset, mem_addr });
                             self.regs[rd] = sign_ext(mem_val, 16);
@@ -1338,13 +1551,7 @@ pub const CPU = struct {
                         }
                     },
                     0b010 => {
-                        switch (@as(u2, @intCast(mem_addr & 0x3))) {
-                            0b00 => {},
-                            0b01 => mem_val = ((try self.mem_read_aligned(mem_addr + 4, false) & 0xFF) << 24) | (mem_val >> 8),
-                            0b10 => mem_val = ((try self.mem_read_aligned(mem_addr + 4, false) & 0xFFFF) << 16) | (mem_val >> 16),
-                            0b11 => mem_val = ((try self.mem_read_aligned(mem_addr + 4, false) & 0xFFFFFF) << 8) | (mem_val >> 24),
-                        }
-
+                        const mem_val = try self.mem_read(mem_addr, false, 4);
                         log.debug("LW rd={} rs1={} offset=0x{x} addr=0x{x} val=0x{x}", .{ rd, rs1, offset, mem_addr, mem_val });
                         self.regs[rd] = mem_val;
                     },
@@ -1356,56 +1563,20 @@ pub const CPU = struct {
             0b0100011 => {
                 const offset = sign_ext((funct7 << 5) | rd, 12);
                 const mem_addr = @addWithOverflow(self.read_reg(rs1), offset)[0];
-                var rs2_val = self.read_reg(rs2);
+                const rs2_val = self.read_reg(rs2);
 
-                var mem_val: WORD = 0;
-                if (!(funct3 == 0b010 and mem_addr & 0x3 == 0x0)) {
-                    mem_val = try self.mem_read_aligned(mem_addr, false);
-                }
                 switch (funct3) {
                     0b000 => {
-                        rs2_val &= 0xFF;
                         log.debug("SB rd={} rs1={} offset=0x{x} addr=0x{x}", .{ rd, rs1, offset, mem_addr });
-
-                        switch (@as(u2, @intCast(mem_addr & 0x3))) {
-                            0b00 => try self.mem_write_aligned(mem_addr, (mem_val & 0xFFFFFF00) | rs2_val),
-                            0b01 => try self.mem_write_aligned(mem_addr, (mem_val & 0xFFFF00FF) | (rs2_val << 8)),
-                            0b10 => try self.mem_write_aligned(mem_addr, (mem_val & 0xFF00FFFF) | (rs2_val << 16)),
-                            0b11 => try self.mem_write_aligned(mem_addr, (mem_val & 0x00FFFFFF) | (rs2_val << 24)),
-                        }
+                        try self.mem_write(mem_addr, rs2_val, 1);
                     },
                     0b001 => {
-                        rs2_val &= 0xFFFF;
                         log.debug("SH rd={} rs1={} offset=0x{x} addr=0x{x}", .{ rd, rs1, offset, mem_addr });
-
-                        switch (@as(u2, @intCast(mem_addr & 0x3))) {
-                            0b00 => try self.mem_write_aligned(mem_addr, (mem_val & 0xFFFF0000) | rs2_val),
-                            0b01 => try self.mem_write_aligned(mem_addr, (mem_val & 0xFF0000FF) | (rs2_val << 8)),
-                            0b10 => try self.mem_write_aligned(mem_addr, (mem_val & 0x0000FFFF) | (rs2_val << 16)),
-                            0b11 => {
-                                try self.mem_write_aligned(mem_addr, (mem_val & 0x00FFFFFF) | (rs2_val << 24));
-                                try self.mem_write_aligned(mem_addr + 4, (try self.mem_read_aligned(mem_addr + 4, false) & 0xFFFFFF00) | (rs2_val >> 8));
-                            },
-                        }
+                        try self.mem_write(mem_addr, rs2_val, 2);
                     },
                     0b010 => {
                         log.debug("SW rd={} rs1={} rs2={} offset=0x{x} addr=0x{x} val=0x{x}", .{ rd, rs1, rs2, offset, mem_addr, rs2_val });
-
-                        switch (@as(u2, @intCast(mem_addr & 0x3))) {
-                            0b00 => try self.mem_write_aligned(mem_addr, rs2_val),
-                            0b01 => {
-                                try self.mem_write_aligned(mem_addr, (mem_val & 0x000000FF) | (rs2_val << 8));
-                                try self.mem_write_aligned(mem_addr + 4, (try self.mem_read_aligned(mem_addr + 4, false) & 0xFFFFFF00) | (rs2_val >> 24));
-                            },
-                            0b10 => {
-                                try self.mem_write_aligned(mem_addr, (mem_val & 0x0000FFFF) | (rs2_val << 16));
-                                try self.mem_write_aligned(mem_addr + 4, (try self.mem_read_aligned(mem_addr + 4, false) & 0xFFFF0000) | (rs2_val >> 16));
-                            },
-                            0b11 => {
-                                try self.mem_write_aligned(mem_addr, (mem_val & 0x00FFFFFF) | (rs2_val << 24));
-                                try self.mem_write_aligned(mem_addr + 4, (try self.mem_read_aligned(mem_addr + 4, false) & 0xFF000000) | (rs2_val >> 8));
-                            },
-                        }
+                        try self.mem_write(mem_addr, rs2_val, 4);
                     },
                     else => {
                         return CPUError.IllegalInstruction;
@@ -1957,7 +2128,7 @@ pub const CPU = struct {
                             return CPUError.AMOAddressMisaligned;
                         }
                         const rs2_val = self.read_reg(rs2);
-                        const mem_val = try self.mem_read_aligned(mem_addr, false);
+                        const mem_val = try self.mem_read(mem_addr, false, 4);
                         if (funct5 != 0b00010 and funct5 != 0b00011) {
                             // not LR.W and SC.W
                             self.regs[rd] = mem_val;
@@ -1966,54 +2137,54 @@ pub const CPU = struct {
                         switch (funct5) {
                             0b00000 => {
                                 log.debug("AMOADD.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
-                                try self.mem_write_aligned(mem_addr, @addWithOverflow(mem_val, rs2_val)[0]);
+                                try self.mem_write(mem_addr, @addWithOverflow(mem_val, rs2_val)[0], 4);
                             },
                             0b00001 => {
                                 log.debug("AMOSWAP.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
-                                try self.mem_write_aligned(mem_addr, rs2_val);
+                                try self.mem_write(mem_addr, rs2_val, 4);
                             },
                             0b00100 => {
                                 log.debug("AMOXOR.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
-                                try self.mem_write_aligned(mem_addr, mem_val ^ rs2_val);
+                                try self.mem_write(mem_addr, mem_val ^ rs2_val, 4);
                             },
                             0b01100 => {
                                 log.debug("AMOAND.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
-                                try self.mem_write_aligned(mem_addr, mem_val & rs2_val);
+                                try self.mem_write(mem_addr, mem_val & rs2_val, 4);
                             },
                             0b01000 => {
                                 log.debug("AMOOR.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
-                                try self.mem_write_aligned(mem_addr, mem_val | rs2_val);
+                                try self.mem_write(mem_addr, mem_val | rs2_val, 4);
                             },
                             0b10000 => {
                                 log.debug("AMOMIN.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
                                 if (@as(i32, @bitCast(mem_val)) < @as(i32, @bitCast(rs2_val))) {
-                                    try self.mem_write_aligned(mem_addr, mem_val);
+                                    try self.mem_write(mem_addr, mem_val, 4);
                                 } else {
-                                    try self.mem_write_aligned(mem_addr, rs2_val);
+                                    try self.mem_write(mem_addr, rs2_val, 4);
                                 }
                             },
                             0b10100 => {
                                 log.debug("AMOMAX.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
                                 if (@as(i32, @bitCast(mem_val)) > @as(i32, @bitCast(rs2_val))) {
-                                    try self.mem_write_aligned(mem_addr, mem_val);
+                                    try self.mem_write(mem_addr, mem_val, 4);
                                 } else {
-                                    try self.mem_write_aligned(mem_addr, rs2_val);
+                                    try self.mem_write(mem_addr, rs2_val, 4);
                                 }
                             },
                             0b11000 => {
                                 log.debug("AMOMINU.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
                                 if (mem_val < rs2_val) {
-                                    try self.mem_write_aligned(mem_addr, mem_val);
+                                    try self.mem_write(mem_addr, mem_val, 4);
                                 } else {
-                                    try self.mem_write_aligned(mem_addr, rs2_val);
+                                    try self.mem_write(mem_addr, rs2_val, 4);
                                 }
                             },
                             0b11100 => {
                                 log.debug("AMOMAXU.W rd={} rs1={} rs2={} aq={} rl={}", .{ rd, rs1, rs2, aq, rl });
                                 if (mem_val > rs2_val) {
-                                    try self.mem_write_aligned(mem_addr, mem_val);
+                                    try self.mem_write(mem_addr, mem_val, 4);
                                 } else {
-                                    try self.mem_write_aligned(mem_addr, rs2_val);
+                                    try self.mem_write(mem_addr, rs2_val, 4);
                                 }
                             },
                             0b00010 => {
@@ -2040,7 +2211,7 @@ pub const CPU = struct {
 
                                 // TODO: is this OK?
                                 if (self.mem_reserves.get(mem_addr)) |_| {
-                                    try self.mem_write_aligned(mem_addr, rs2_val);
+                                    try self.mem_write(mem_addr, rs2_val, 4);
                                     self.regs[rd] = 0;
                                 } else {
                                     self.regs[rd] = 1;
@@ -2054,23 +2225,6 @@ pub const CPU = struct {
                 }
             },
             else => return CPUError.IllegalInstruction,
-        }
-
-        // check interrupts trapped to M-mode
-        if ((self.csr.current_level == .Machine and self.csr.reg_mstatus.mie == 1) or self.csr.current_level != .Machine) {
-            if (self.csr.reg_mip.meip == 1 and self.csr.reg_mie.meie == 1 and self.csr.reg_mideleg.meip == 0) return CPUError.MachineExternalInterrupt;
-            if (self.csr.reg_mip.msip == 1 and self.csr.reg_mie.msie == 1 and self.csr.reg_mideleg.msip == 0) return CPUError.MachineSoftwareInterrupt;
-            if (self.csr.reg_mip.mtip == 1 and self.csr.reg_mie.mtie == 1 and self.csr.reg_mideleg.mtip == 0) return CPUError.MachineTimerInterrupt;
-            if (self.csr.reg_mip.seip == 1 and self.csr.reg_mie.seie == 1 and self.csr.reg_mideleg.seip == 0) return CPUError.SupervisorExternalInterrupt;
-            if (self.csr.reg_mip.ssip == 1 and self.csr.reg_mie.ssie == 1 and self.csr.reg_mideleg.ssip == 0) return CPUError.SupervisorSoftwareInterrupt;
-            if (self.csr.reg_mip.stip == 1 and self.csr.reg_mie.stie == 1 and self.csr.reg_mideleg.stip == 0) return CPUError.SupervisorTimerInterrupt;
-        }
-
-        // check interrupts trapped to S-mode
-        if ((self.csr.current_level == .Supervisor and self.csr.reg_mstatus.sie == 1) or self.csr.current_level == .User) {
-            if (self.csr.reg_mip.seip == 1 and self.csr.reg_mie.seie == 1) return CPUError.SupervisorExternalInterrupt;
-            if (self.csr.reg_mip.ssip == 1 and self.csr.reg_mie.ssie == 1) return CPUError.SupervisorSoftwareInterrupt;
-            if (self.csr.reg_mip.stip == 1 and self.csr.reg_mie.stie == 1) return CPUError.SupervisorTimerInterrupt;
         }
 
         self.pc += 4;

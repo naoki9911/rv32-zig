@@ -53,3 +53,6 @@ if [ $? -ne 0 ]; then
 fi
 set -e
 
+
+wget -O zls.tar.xz https://builds.zigtools.org/zls-linux-x86_64-$ZIG_VERSION.tar.xz
+tar -xvf zls.tar.xz -C $INSTALL_DIR

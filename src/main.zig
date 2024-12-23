@@ -1,9 +1,15 @@
 const std = @import("std");
 const cpu = @import("cpu.zig");
 
+pub const std_options = .{
+    // Set this to .info, .debug, .warn, or .err.
+    .log_level = .warn,
+};
+
 pub fn main() !void {
     var allocator = std.heap.GeneralPurposeAllocator(.{}){};
-    var f = try std.fs.cwd().openFile("./riscv-tests/isa/rv32ui-v-add.bin", .{});
+    //var f = try std.fs.cwd().openFile("./riscv-tests/isa/rv32ui-v-add.bin", .{});
+    var f = try std.fs.cwd().openFile("./xv6-riscv/kernel/kernel.bin", .{});
     const fstat = try f.stat();
     var test_file_buffer = try allocator.allocator().alloc(u8, fstat.size);
     defer allocator.allocator().free(test_file_buffer);
