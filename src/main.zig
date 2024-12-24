@@ -16,11 +16,8 @@ pub fn main() !void {
     const read_size = try f.readAll(test_file_buffer);
     std.debug.print("test file size = {d}\n", .{read_size});
 
-    var buffer: [1000]u8 = undefined;
-    var fba = std.heap.FixedBufferAllocator.init(&buffer);
-
-    var c = cpu.CPU.init(fba.allocator());
-    c.exit_on_ecall = true;
+    var c = try cpu.CPU.init(allocator.allocator());
+    //c.exit_on_ecall = true;
     try c.load_memory(test_file_buffer[0..read_size], 0);
     while (true) {
         c.tick_cycle() catch |err| switch (err) {

@@ -851,6 +851,10 @@ pub fn to_exception_code(e: usize) u31 {
 const MMIOError = error{
     InvalidWordSize,
     NotHooked,
+    ReadOnly,
+    WriteOnly,
+    InvalidAlignment,
+    InternalError,
 };
 
 const CLINT = struct {
@@ -895,9 +899,10 @@ const CLINT = struct {
 
     pub fn tick(self: *Self) void {
         self.cycle_counter += 1;
-        if (self.cycle_counter % 100 == 0) {
-            self.mtime += 1;
-        }
+        // TODO: prescaler is not needed?
+        //if (self.cycle_counter% 100 == 0) {
+        //}
+        self.mtime += 1;
 
         if (self.mtime >= self.mtimecmp) {
             self.csr.reg_mip.mtip = 1;
@@ -964,14 +969,469 @@ const UART = struct {
     }
 };
 
+// https://github.com/riscv/riscv-plic-spec/blob/master/riscv-plic-1.0.0.pdf
+pub const PLIC = struct {
+    priorities: [1024]u32 = [_]u32{0} ** 1024,
+    pendings: [1024]bool = [_]bool{false} ** 1024,
+    claiming: [1024]bool = [_]bool{false} ** 1024,
+
+    // context 0 = hart 0 with m-mode
+    mie: [32]u32 = [_]u32{0} ** 32,
+    mthresh: u32 = 0,
+
+    // context 1 = hart 0 with s-mode
+    sie: [32]u32 = [_]u32{0} ** 32,
+    sthresh: u32 = 0,
+
+    const Self = @This();
+    const PLIC_BASE: u32 = 0xC000000;
+
+    fn get_highest_priority_intr(self: *Self, context: usize) u32 {
+        // TODO: handle priority
+        switch (context) {
+            0 => return self.check_meip(),
+            1 => return self.check_seip(),
+            else => return 0,
+        }
+        return 0;
+    }
+
+    pub fn irq_activate(self: *Self, irq: usize) void {
+        self.pendings[irq] = true;
+        log.info("[PLIC] IRQ {} is activated {}", .{ irq, self.pendings[irq] });
+    }
+
+    pub fn irq_deactivate(self: *Self, irq: usize) void {
+        self.pendings[irq] = false;
+        log.info("[PLIC] IRQ {} is de-activated", .{irq});
+    }
+
+    pub fn check_meip(self: *Self) u32 {
+        // 1, 10 is corresponds to virtio-blk and UART
+        for ([_]usize{ 1, 10 }) |i| {
+            if (!self.claiming[i] and self.pendings[i] and self.priorities[i] > self.mthresh) {
+                if ((self.mie[i / 32] >> @as(u5, @intCast((i % 32)))) & 0x1 == 1) {
+                    //log.warn("interrupt machine on {} is pending", .{i});
+                    return @intCast(i);
+                }
+            }
+        }
+        return 0;
+    }
+
+    pub fn check_seip(self: *Self) u32 {
+        // 1, 10 is corresponds to virtio-blk and UART
+        for ([_]usize{ 1, 10 }) |i| {
+            if (!self.claiming[i] and self.pendings[i] and self.priorities[i] > self.sthresh) {
+                if ((self.sie[i / 32] >> @as(u5, @intCast((i % 32)))) & 0x1 == 1) {
+                    //log.warn("interrupt supervisor on {} is pending", .{i});
+                    return @intCast(i);
+                }
+            }
+        }
+        return 0;
+    }
+
+    pub fn mem_read(self: *Self, addr: u34, word_size: usize) MMIOError!WORD {
+        if (word_size != 4) return MMIOError.InvalidWordSize;
+        if (addr < PLIC_BASE) return MMIOError.NotHooked;
+
+        const reg_addr = addr - PLIC_BASE;
+        if (reg_addr < 0x1000) {
+            // Chapter 4. Interrupt Priorities
+            return self.priorities[reg_addr >> 2];
+        } else if (reg_addr < 0x2000) {
+            // Chapter 5. Interrupt Pending Bits
+            return MMIOError.WriteOnly;
+        } else if (reg_addr < 0x1F200) {
+            // Chapter 6. Interrupt Enables
+            // Enable bits for sources N on context X
+            if (reg_addr < 0x2080) {
+                // context 0
+                return self.mie[(reg_addr - 0x2000) >> 2];
+            } else if (reg_addr < 0x2100) {
+                // context 1
+                return self.sie[(reg_addr - 0x2080) >> 2];
+            } else {
+                log.warn("[PLIC] read from 0x{x} is not handled", .{reg_addr});
+            }
+        } else if (reg_addr < 0x400000) {
+            // Chapter 7. Priority Thresholds
+            // Chapter 8. Interrupt Claim Process
+            switch (reg_addr) {
+                0x200000 => return self.mthresh,
+                0x200004 => {
+                    const claim = self.get_highest_priority_intr(0);
+                    if (claim != 0) {
+                        // TODO: clear component's pending bit
+                        self.claiming[claim] = true;
+                    }
+                    return claim;
+                },
+                0x201000 => return self.sthresh,
+                0x201004 => {
+                    const claim = self.get_highest_priority_intr(1);
+                    if (claim != 0) {
+                        // TODO: clear component's pending bit
+                        self.claiming[claim] = true;
+                    }
+                    return claim;
+                },
+                else => log.warn("[PLIC] read from 0x{x} is not handled", .{reg_addr}),
+            }
+        } else {
+            return MMIOError.NotHooked;
+        }
+
+        return 0;
+    }
+
+    pub fn mem_write(self: *Self, addr: u34, val: WORD, word_size: usize) MMIOError!void {
+        if (word_size != 4) return MMIOError.InvalidWordSize;
+        if (addr < PLIC_BASE) return MMIOError.NotHooked;
+
+        const reg_addr = addr - PLIC_BASE;
+        if (reg_addr < 0x1000) {
+            // Chapter 4. Interrupt Priorities
+            self.priorities[reg_addr >> 2] = val;
+            log.info("[PLIC] interrupt priority at 0x{x} is {}", .{ reg_addr, val });
+        } else if (reg_addr < 0x2000) {
+            // Chapter 5. Interrupt Pending Bits
+            return MMIOError.ReadOnly;
+        } else if (reg_addr < 0x200000) {
+            // Chapter 6. Interrupt Enables
+            // Enable bits for sources N on context X
+            if (reg_addr < 0x2080) {
+                // context 0
+                self.mie[(reg_addr - 0x2000) >> 2] = val;
+                log.info("[PLIC] interrupt context 0 enabled at 0x{x} for 0x{x}", .{ reg_addr, val });
+            } else if (reg_addr < 0x2100) {
+                // context 1
+                self.sie[(reg_addr - 0x2080) >> 2] = val;
+                log.info("[PLIC] interrupt context 1 enabled at 0x{x} for 0x{x}", .{ reg_addr, val });
+            } else {
+                log.warn("[PLIC] write to 0x{x} val=0x{x} is not handled", .{ reg_addr, val });
+            }
+        } else if (reg_addr < 0x400000) {
+            // Chapter 7. Priority Thresholds
+            // Chapter 8. Interrupt Claim Process
+            switch (reg_addr) {
+                0x200000 => {
+                    self.mthresh = val;
+                    log.info("[PLIC] mthresh is 0x{x}", .{self.mthresh});
+                },
+                0x200004 => {
+                    self.claiming[val] = false;
+                },
+                0x201000 => {
+                    self.sthresh = val;
+                    log.info("[PLIC] sthresh is 0x{x}", .{self.sthresh});
+                },
+                0x201004 => {
+                    self.claiming[val] = false;
+                },
+                else => log.warn("[PLIC] write to 0x{x} val=0x{x} is not handled", .{ reg_addr, val }),
+            }
+        } else {
+            return MMIOError.NotHooked;
+        }
+    }
+};
+
+const virtio = @import("virtio.zig");
+
+// https://docs.oasis-open.org/virtio/virtio/v1.1/csprd01/virtio-v1.1-csprd01.html#x1-1460002
+pub const VirtioBlk = struct {
+    image: std.fs.File,
+    host_mem_base_addr: usize,
+    guest_mem_base_addr: usize,
+    plic: *PLIC,
+
+    status: u32 = 0,
+    driver_feature_sel: u32 = 0,
+    driver_features: [2]u32 = [2]u32{ 0, VIRTIO_F_VERSION },
+    driver_features_fixed: bool = false,
+
+    device_feature_sel: u32 = 0,
+    queue: ?VQ = null,
+    tmp_queue_num: u32 = 0,
+    tmp_queue_desc: u32 = 0,
+    tmp_driver_desc: u32 = 0,
+    tmp_device_desc: u32 = 0,
+
+    const DeviceFeatures: [2]u32 = [2]u32{ 0, VIRTIO_F_VERSION };
+    const MaxQueueSize: u32 = 32;
+    const Self = @This();
+    const VQ = virtio.Virtqueue(Self);
+
+    const IRQ_NUM = 1;
+    const BASE_ADDR: u32 = 0x10001000;
+
+    // virtio v1.3 spec "4.2.2 MMIO Device Register Layout"
+    const MAGIC_VALUE: u32 = 0x000;
+    const VERSION: u32 = 0x004;
+    const DEVICE_ID: u32 = 0x008;
+    const VENDOR_ID: u32 = 0x00C;
+    const DEVICE_FEATURES: u32 = 0x010;
+    const DEVICE_FEATURES_SEL: u32 = 0x014;
+    const DRIVER_FEATURES: u32 = 0x020;
+    const DRIVER_FEATURES_SEL: u32 = 0x024;
+    const QUEUE_SEL: u32 = 0x030;
+    const QUEUE_SIZE_MAX: u32 = 0x034;
+    const QUEUE_SIZE: u32 = 0x038;
+    const QUEUE_READY: u32 = 0x044;
+    const QUEUE_NOTIFY: u32 = 0x050;
+    const INTERRUPT_STATUS: u32 = 0x060;
+    const INTERRUPT_ACK: u32 = 0x064;
+    const STATUS: u32 = 0x070;
+    const QUEUE_DESC_LOW: u32 = 0x080;
+    const QUEUE_DESC_HIGH: u32 = 0x084;
+    const QUEUE_DRIVER_LOW: u32 = 0x090;
+    const QUEUE_DRIVER_HIGH: u32 = 0x094;
+    const QUEUE_DEVICE_LOW: u32 = 0x0A0;
+    const QUEUE_DEVICE_HIGH: u32 = 0x0A4;
+    const SHM_SEL: u32 = 0x0AC;
+    const SHM_LEN_LOW: u32 = 0x0B0;
+    const SHM_LEN_HIGH: u32 = 0x0B4;
+    const SHM_BASE_LOW: u32 = 0x0B8;
+    const SHM_BASE_HIGH: u32 = 0x0BC;
+    const QUEUE_RESET: u32 = 0x0C0;
+    const CONFIG_GENERATION: u32 = 0x0FC;
+
+    // virtio v1.3 spec "2.1 Device Status Field"
+    const STATUS_ACKNOWLEDGE: u32 = 1;
+    const STATUS_DRIVER: u32 = 2;
+    const STATUS_FAILED: u32 = 128;
+    const STATUS_FEATURES_OK: u32 = 8;
+    const STATUS_DRIVER_OK: u32 = 4;
+    const STATUS_DEVICE_NEEDS_RESET: u32 = 64;
+
+    // DeviceFeaturesSel = 0
+    // virrio v1.3 spec "5.2.3 Feature bits"
+    const VIRTIO_BLK_F_SIZE_MAX: u32 = (1 << 1);
+    const VIRTIO_BLK_F_SEG_MAX: u32 = (1 << 2);
+    const VIRTIO_BLK_F_GEOMETRY: u32 = (1 << 4);
+    const VIRTIO_BLK_F_RO: u32 = (1 << 5);
+    const VIRTIO_BLK_F_BLK_SIZE: u32 = (1 << 6);
+    const VIRTIO_BLK_F_FLUSH: u32 = (1 << 9);
+    const VIRTIO_BLK_F_TOPOLOGY: u32 = (1 << 10);
+    const VIRTIO_BLK_F_CONFIG_WCE: u32 = (1 << 11);
+    const VIRTIO_BLK_F_MQ: u32 = (1 << 12);
+    const VIRTIO_BLK_F_DISCARD: u32 = (1 << 13);
+    const VIRTIO_BLK_F_WRITE_ZEROES: u32 = (1 << 14);
+    const VIRTIO_BLK_F_LIFETIME: u32 = (1 << 15);
+    const VIRTIO_BLK_F_SECURE_ERASE: u32 = (1 << 16);
+    const VIRTIO_BLK_F_ZONED: u32 = (1 << 17);
+    // virtio v1.3 spec "6 Reserved Feature Bits"
+    const VIRTIO_F_INDIRECT_DESC: u32 = (1 << 28);
+    const VIRTIO_F_EVENT_IDX: u32 = (1 << 29);
+
+    // DeviceFeaturesSel = 1
+    const VIRTIO_F_VERSION: u32 = (1 << (32 - 32));
+    const VIRTIO_F_ACCESS_PLATFORM: u32 = (1 << (33 - 32));
+    const VIRTIO_F_RING_PACKED: u32 = (1 << (34 - 32));
+    const VIRTIO_F_IN_ORDER: u32 = (1 << (35 - 32));
+    const VIRTIO_F_ORDER_PLATFORM: u32 = (1 << (36 - 32));
+    const VIRTIO_F_SR_IOV: u32 = (1 << (37 - 32));
+    const VIRTIO_F_NOTIFICATION_DATA: u32 = (1 << (38 - 32));
+    const VIRTIO_F_NOTIF_CONFIG_DATA: u32 = (1 << (39 - 32));
+    const VIRTIO_F_RING_RESET: u32 = (1 << (40 - 32));
+    const VIRTIO_F_ADMIN_VQ: u32 = (1 << (41 - 32));
+
+    pub fn init(host_mem_base: usize, guest_mem_base: usize, plic: *PLIC) !Self {
+        return .{
+            .image = try std.fs.cwd().openFile("./xv6-riscv/fs.img", .{ .mode = .read_write }),
+            .host_mem_base_addr = host_mem_base,
+            .guest_mem_base_addr = guest_mem_base,
+            .plic = plic,
+        };
+    }
+
+    pub fn mem_read(self: *Self, addr: u34, word_size: usize) MMIOError!WORD {
+        if (word_size != 4) return MMIOError.InvalidWordSize;
+        if (addr < BASE_ADDR) return MMIOError.NotHooked;
+
+        const reg_addr = addr - BASE_ADDR;
+        switch (reg_addr) {
+            MAGIC_VALUE => return 0x74726976, // Magic value
+            VERSION => return 2, // Device version number
+            DEVICE_ID => return 2, // Virtio subsystem Device ID (blk = 2)
+            VENDOR_ID => return 0x554d4551, // Virtio Subsystem Vendor ID
+            DEVICE_FEATURES => {
+                const sel = self.device_feature_sel;
+                if (sel < 2) {
+                    return DeviceFeatures[sel];
+                } else {
+                    return 0;
+                }
+            },
+            DEVICE_FEATURES_SEL => return MMIOError.WriteOnly,
+            DRIVER_FEATURES => return MMIOError.WriteOnly,
+            DRIVER_FEATURES_SEL => return MMIOError.WriteOnly,
+            QUEUE_SEL => return MMIOError.WriteOnly,
+            QUEUE_SIZE_MAX => return MaxQueueSize,
+            QUEUE_SIZE => return MMIOError.WriteOnly,
+            QUEUE_DESC_LOW, QUEUE_DESC_HIGH => return MMIOError.WriteOnly,
+            QUEUE_DRIVER_LOW, QUEUE_DRIVER_HIGH => return MMIOError.WriteOnly,
+            QUEUE_DEVICE_LOW, QUEUE_DEVICE_HIGH => return MMIOError.WriteOnly,
+            QUEUE_READY => if (self.queue == null) return 0 else return 1,
+            QUEUE_NOTIFY => return MMIOError.WriteOnly,
+            INTERRUPT_STATUS => return 0x3,
+            INTERRUPT_ACK => return MMIOError.WriteOnly,
+            STATUS => return self.status,
+            else => return MMIOError.NotHooked,
+        }
+    }
+
+    pub fn mem_write(self: *Self, addr: u34, val: WORD, word_size: usize) MMIOError!void {
+        if (word_size != 4) return MMIOError.InvalidWordSize;
+        if (addr < BASE_ADDR) return MMIOError.NotHooked;
+
+        const reg_addr = addr - BASE_ADDR;
+        switch (reg_addr) {
+            MAGIC_VALUE => return MMIOError.ReadOnly,
+            VERSION => return MMIOError.ReadOnly,
+            DEVICE_ID => return MMIOError.ReadOnly,
+            VENDOR_ID => return MMIOError.ReadOnly,
+            DEVICE_FEATURES => return MMIOError.ReadOnly,
+            DEVICE_FEATURES_SEL => self.device_feature_sel = val,
+            DRIVER_FEATURES => {
+                if (self.driver_features_fixed) return;
+                const sel = self.driver_feature_sel;
+                if (sel < 2) {
+                    self.driver_features[sel] = val;
+                }
+            },
+            DRIVER_FEATURES_SEL => self.driver_feature_sel = val,
+            QUEUE_SEL => return, // TODO: handle val != 0 (without MQ support, num of queues must be 1)
+            QUEUE_SIZE_MAX => return MMIOError.ReadOnly,
+            QUEUE_SIZE => {
+                if (self.tmp_queue_num <= MaxQueueSize) {
+                    self.tmp_queue_num = val;
+                } else {
+                    self.tmp_queue_num = MaxQueueSize;
+                }
+            },
+            QUEUE_DESC_LOW => {
+                if (val & 0x3 != 0) return MMIOError.InvalidAlignment;
+                self.tmp_queue_desc = val;
+                std.log.info("DESC = 0x{x}", .{self.tmp_queue_desc});
+            },
+            QUEUE_DRIVER_LOW => {
+                if (val & 0x3 != 0) return MMIOError.InvalidAlignment;
+                self.tmp_driver_desc = val;
+                std.log.info("DRIVER = 0x{x}", .{self.tmp_driver_desc});
+            },
+            QUEUE_DEVICE_LOW => {
+                if (val & 0x3 != 0) return MMIOError.InvalidAlignment;
+                self.tmp_device_desc = val;
+                std.log.info("DEVICE = 0x{x}", .{self.tmp_device_desc});
+            },
+            QUEUE_DESC_HIGH, QUEUE_DRIVER_HIGH, QUEUE_DEVICE_HIGH => return, // TODO: handle val != 0
+            QUEUE_READY => {
+                if (self.queue == null) {
+                    const desc_addr = (@as(usize, @intCast(self.tmp_queue_desc)) - self.guest_mem_base_addr) + self.host_mem_base_addr;
+                    const avail_addr = (@as(usize, @intCast(self.tmp_driver_desc)) - self.guest_mem_base_addr) + self.host_mem_base_addr;
+                    const used_addr = (@as(usize, @intCast(self.tmp_device_desc)) - self.guest_mem_base_addr) + self.host_mem_base_addr;
+                    self.queue = virtio.Virtqueue(Self).init(self.tmp_queue_num, desc_addr, avail_addr, used_addr);
+                }
+            },
+            QUEUE_NOTIFY => {
+                log.info("[virtio-blk] notified", .{});
+                // TODO: process rings
+
+                _ = self.queue.?.handle(self) catch |err| {
+                    log.err("virtio queue handle err {}", .{err});
+                    return MMIOError.InternalError;
+                };
+
+                self.plic.irq_activate(IRQ_NUM);
+            },
+            INTERRUPT_STATUS => return MMIOError.ReadOnly,
+            INTERRUPT_ACK => {
+                self.plic.irq_deactivate(IRQ_NUM);
+                // check whether there are something to notify
+                // if exists, re-activate irq.
+            },
+            STATUS => {
+                // TODO handle ACKNOWLEDGE, DRIVER bits and manage state-machine
+                self.status = val;
+                if (self.status & STATUS_FEATURES_OK > 0) {
+                    // if features that are not expected are configured, not to accept them.
+                    var i: usize = 0;
+                    while (i < self.driver_features.len) : (i += 1) {
+                        if (self.driver_features[i] & ~(DeviceFeatures[i]) != 0) {
+                            std.log.err("unexpected features: 0x{x}", .{self.driver_features[i]});
+                            self.status &= ~(STATUS_FEATURES_OK);
+                        }
+                    }
+                    if (self.status & STATUS_FEATURES_OK > 0) self.driver_features_fixed = true;
+                }
+            },
+            else => return MMIOError.NotHooked,
+        }
+    }
+
+    const Request = extern struct {
+        type: u32 = 0,
+        _pad: u32 = 0,
+        sector: u64 = 0,
+    };
+    const VIRTIO_BLK_T_IN = 0;
+    const VIRTIO_BLK_T_OUT = 1;
+    const VIRTIO_BLK_T_FLUSH = 4;
+    const VIRTIO_BLK_T_DISCARD = 11;
+    const VIRTIO_BLK_T_WRITE_ZEROES = 13;
+
+    const VIRTIO_BLK_S_OK = 0;
+    const VIRTIO_BLK_S_IOERR = 1;
+    const VIRTIO_BLK_S_UNSUPP = 2;
+
+    pub fn handleVirtqueue(self: *Self, descs: []*VQ.DescriptorTable) !void {
+        if (descs.len < 3) {
+            log.err("invalid block request", .{});
+            return VQ.Error.InvalidRequest;
+        }
+
+        const req: *Request = @ptrFromInt(descs[0].address - self.guest_mem_base_addr + self.host_mem_base_addr);
+        var idx: usize = req.sector * 512;
+        var desc_idx: usize = 1;
+        while (desc_idx < descs.len - 1) : (desc_idx += 1) {
+            const desc = descs[desc_idx];
+            const buf = @as([*]u8, @ptrFromInt(desc.address - self.guest_mem_base_addr + self.host_mem_base_addr))[0..desc.length];
+            try self.image.seekTo(idx);
+            if (req.type == VIRTIO_BLK_T_IN) {
+                log.info("virtio-blk READ idx=0x{x} len=0x{x}", .{ idx, desc.length });
+                _ = try self.image.read(buf);
+            } else if (req.type == VIRTIO_BLK_T_OUT) {
+                log.info("virtio-blk WRITE idx=0x{x} len=0x{x}", .{ idx, desc.length });
+                _ = try self.image.write(buf);
+            } else {
+                log.err("unsupported operation type={d}", .{req.type});
+            }
+            idx += desc.length;
+        }
+
+        const desc = descs[desc_idx];
+        const buf = @as([*]u8, @ptrFromInt(desc.address - self.guest_mem_base_addr + self.host_mem_base_addr))[0..desc.length];
+        if (desc.length != 1 or (desc.flags & 0x1) != 0) {
+            log.err("invalid descriptor len={d} flags={d}", .{ desc.length, desc.flags });
+            return VQ.Error.InvalidDescriptor;
+        }
+        buf[0] = VIRTIO_BLK_S_OK;
+    }
+};
+
 pub const CPU = struct {
     pc: WORD,
     regs: [32]WORD,
-    mem: [MEMORY_SIZE >> 2]WORD,
+    mem: []WORD,
     mem_reserves: std.AutoHashMap(WORD, void),
-    csr: CSR,
+    csr: *CSR,
     clint: CLINT,
     uart: UART,
+    plic: *PLIC,
+    virtio_blk: VirtioBlk,
     exit_on_ecall: bool = false,
 
     excep_next_pc: WORD = 0,
@@ -979,18 +1439,31 @@ pub const CPU = struct {
 
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator) Self {
-        var csr = CSR.init();
-        const clint = CLINT.init(&csr);
-        const uart = UART.init(&csr);
+    pub fn init(allocator: std.mem.Allocator) !Self {
+        const csrs = try allocator.alloc(CSR, 1);
+        @memset(csrs, CSR{});
+        const csr: *CSR = @ptrCast(csrs);
+
+        const clint = CLINT.init(csr);
+        const uart = UART.init(csr);
+
+        const plics = try allocator.alloc(PLIC, 1);
+        @memset(plics, PLIC{});
+        const plic: *PLIC = @ptrCast(plics);
+
+        const mem = try allocator.alloc(u32, MEMORY_SIZE >> 2);
+        @memset(mem, 0);
+        const blk = try VirtioBlk.init(@intFromPtr(&mem[0]), MEMORY_BASE_ADDR, plic);
         return .{
             .pc = MEMORY_BASE_ADDR, // for riscv-tests
             .regs = [1]WORD{0} ** 32,
-            .mem = [1]WORD{0} ** (MEMORY_SIZE >> 2),
+            .mem = mem,
             .mem_reserves = std.AutoHashMap(WORD, void).init(allocator),
             .csr = csr,
             .clint = clint,
             .uart = uart,
+            .plic = plic,
+            .virtio_blk = blk,
         };
     }
 
@@ -1051,8 +1524,15 @@ pub const CPU = struct {
         if (self.uart.mem_read(addr, word_size)) |res| {
             return res;
         } else |_| {} // if not hooked, continue.
+        if (self.plic.mem_read(addr, word_size)) |res| {
+            return res;
+        } else |_| {} // if not hooked, continue.
+        if (self.virtio_blk.mem_read(addr, word_size)) |res| {
+            return res;
+        } else |_| {} // if not hooked, continue.
 
         // TODO: remove MEMORY_BASE_ADDR
+        if (addr < MEMORY_BASE_ADDR) std.log.err("[MEM.READ] addr=0x{x} is out of bound", .{addr});
         const mem_addr = (addr - MEMORY_BASE_ADDR) >> 2;
         const lower_addr: u2 = @intCast(addr & 0x3);
         switch (word_size) {
@@ -1087,8 +1567,15 @@ pub const CPU = struct {
         if (self.uart.mem_write(addr, val, word_size)) |res| {
             return res;
         } else |_| {} // if not hooked, continue.
+        if (self.plic.mem_write(addr, val, word_size)) |res| {
+            return res;
+        } else |_| {} // if not hooked, continue.
+        if (self.virtio_blk.mem_write(addr, val, word_size)) |res| {
+            return res;
+        } else |_| {} // if not hooked, continue.
 
         // TODO: remove MEMORY_BASE_ADDR
+        if (addr < MEMORY_BASE_ADDR) std.log.err("[MEM.WRITE] addr=0x{x} is out of bound", .{addr});
         const mem_addr = (addr - MEMORY_BASE_ADDR) >> 2;
         const lower_addr: u2 = @intCast(addr & 0x3);
         switch (word_size) {
@@ -1484,21 +1971,34 @@ pub const CPU = struct {
             return CPUError.InstructionAddressMisaligned;
         }
 
+        // process interrupts transition
+        self.csr.reg_mip.meip = @bitCast(self.plic.check_meip() != 0);
+        self.csr.reg_mip.seip = @bitCast(self.plic.check_seip() != 0);
+
         // check interrupts trapped to M-mode
         if ((self.csr.current_level == .Machine and self.csr.reg_mstatus.mie == 1) or self.csr.current_level != .Machine) {
             if (self.csr.reg_mip.meip == 1 and self.csr.reg_mie.meie == 1 and self.csr.reg_mideleg.meip == 0) return CPUError.MachineExternalInterrupt;
             if (self.csr.reg_mip.msip == 1 and self.csr.reg_mie.msie == 1 and self.csr.reg_mideleg.msip == 0) return CPUError.MachineSoftwareInterrupt;
-            if (self.csr.reg_mip.mtip == 1 and self.csr.reg_mie.mtie == 1 and self.csr.reg_mideleg.mtip == 0) return CPUError.MachineTimerInterrupt;
+            if (self.csr.reg_mip.mtip == 1 and self.csr.reg_mie.mtie == 1 and self.csr.reg_mideleg.mtip == 0) {
+                std.log.err("MTIER!", .{});
+                return CPUError.MachineTimerInterrupt;
+            }
             if (self.csr.reg_mip.seip == 1 and self.csr.reg_mie.seie == 1 and self.csr.reg_mideleg.seip == 0) return CPUError.SupervisorExternalInterrupt;
             if (self.csr.reg_mip.ssip == 1 and self.csr.reg_mie.ssie == 1 and self.csr.reg_mideleg.ssip == 0) return CPUError.SupervisorSoftwareInterrupt;
-            if (self.csr.reg_mip.stip == 1 and self.csr.reg_mie.stie == 1 and self.csr.reg_mideleg.stip == 0) return CPUError.SupervisorTimerInterrupt;
+            if (self.csr.reg_mip.stip == 1 and self.csr.reg_mie.stie == 1 and self.csr.reg_mideleg.stip == 0) {
+                std.log.err("STIMER!", .{});
+                return CPUError.SupervisorTimerInterrupt;
+            }
         }
 
         // check interrupts trapped to S-mode
         if ((self.csr.current_level == .Supervisor and self.csr.reg_mstatus.sie == 1) or self.csr.current_level == .User) {
             if (self.csr.reg_mip.seip == 1 and self.csr.reg_mie.seie == 1) return CPUError.SupervisorExternalInterrupt;
             if (self.csr.reg_mip.ssip == 1 and self.csr.reg_mie.ssie == 1) return CPUError.SupervisorSoftwareInterrupt;
-            if (self.csr.reg_mip.stip == 1 and self.csr.reg_mie.stie == 1) return CPUError.SupervisorTimerInterrupt;
+            if (self.csr.reg_mip.stip == 1 and self.csr.reg_mie.stie == 1) {
+                std.log.err("STIMER!", .{});
+                return CPUError.SupervisorTimerInterrupt;
+            }
         }
 
         self.clint.tick();
