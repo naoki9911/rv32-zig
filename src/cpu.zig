@@ -914,14 +914,17 @@ const CLINT = struct {
 
 const UART = struct {
     csr: *CSR,
+    plic: *PLIC,
 
     // TODO: implement TX FIFO
     fcr: u8 = 0,
     lcr: u8 = 0,
     isr: u8 = 0,
     ier: u8 = 0,
+    to_read: ?u8 = null,
 
     const Self = @This();
+    const IRQ_NUM = 10;
     const UART_BASE: u32 = 0x10000000;
 
     // http://byterunner.com/16550.html
@@ -940,19 +943,33 @@ const UART = struct {
     const LSR_RX_READY: u32 = 1;
     const LSR_TX_IDLE: u32 = 1 << 5;
 
-    pub fn init(csr: *CSR) Self {
+    pub fn init(csr: *CSR, plic: *PLIC) Self {
         return .{
             .csr = csr,
+            .plic = plic,
         };
     }
 
     pub fn mem_read(self: *Self, addr: u34, word_size: usize) MMIOError!WORD {
         if (word_size != 1) return MMIOError.InvalidWordSize;
-        _ = self;
         switch (addr) {
-            UART_RHR_ADDR => return 0,
-            UART_ISR_ADDR => return 0,
-            UART_LSR_ADDR => return LSR_TX_IDLE, // TX is already idle.
+            UART_RHR_ADDR => {
+                if (self.to_read) |c| {
+                    self.plic.irq_deactivate(IRQ_NUM);
+                    self.to_read = null;
+                    return c;
+                } else {
+                    return 0;
+                }
+            },
+            UART_ISR_ADDR => return MMIOError.NotHooked,
+            UART_LSR_ADDR => {
+                if (self.to_read) |_| {
+                    return LSR_TX_IDLE | LSR_RX_READY;
+                } else {
+                    return LSR_TX_IDLE;
+                }
+            },
             else => return MMIOError.NotHooked,
         }
     }
@@ -961,10 +978,21 @@ const UART = struct {
         if (word_size != 1) return MMIOError.InvalidWordSize;
         switch (addr) {
             UART_THR_ADDR => std.debug.print("{c}", .{@as(u8, @intCast(val & 0xFF))}),
-            UART_IER_ADDR => self.ier = @intCast(val & 0xFF),
+            UART_IER_ADDR => {
+                self.ier = @intCast(val & 0xFF);
+                if (self.ier & 0x1 == 0) self.plic.irq_deactivate(IRQ_NUM);
+            },
             UART_FCR_ADDR => self.fcr = @intCast(val & 0xFF),
             UART_LCR_ADDR => self.lcr = @intCast(val & 0xFF),
             else => return MMIOError.NotHooked,
+        }
+    }
+
+    pub fn putc(self: *Self, c: u8) void {
+        while (self.to_read != null) {}
+        self.to_read = c;
+        if (self.ier & 0x1 > 0) {
+            self.plic.irq_activate(IRQ_NUM);
         }
     }
 };
@@ -1445,7 +1473,6 @@ pub const CPU = struct {
         const csr: *CSR = @ptrCast(csrs);
 
         const clint = CLINT.init(csr);
-        const uart = UART.init(csr);
 
         const plics = try allocator.alloc(PLIC, 1);
         @memset(plics, PLIC{});
@@ -1454,6 +1481,7 @@ pub const CPU = struct {
         const mem = try allocator.alloc(u32, MEMORY_SIZE >> 2);
         @memset(mem, 0);
         const blk = try VirtioBlk.init(@intFromPtr(&mem[0]), MEMORY_BASE_ADDR, plic);
+        const uart = UART.init(csr, plic);
         return .{
             .pc = MEMORY_BASE_ADDR, // for riscv-tests
             .regs = [1]WORD{0} ** 32,

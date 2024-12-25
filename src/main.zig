@@ -19,6 +19,8 @@ pub fn main() !void {
     var c = try cpu.CPU.init(allocator.allocator());
     //c.exit_on_ecall = true;
     try c.load_memory(test_file_buffer[0..read_size], 0);
+
+    _ = try std.Thread.spawn(.{}, handleStdin, .{&c});
     while (true) {
         c.tick_cycle() catch |err| switch (err) {
             cpu.CPUError.EcallInvoked => {
@@ -35,6 +37,20 @@ pub fn main() !void {
         std.debug.print("OK!\n", .{});
     } else {
         std.debug.print("FAIL val={}\n", .{res_val});
+    }
+}
+
+fn handleStdin(core: *cpu.CPU) !void {
+    const stdin = std.io.getStdIn().reader();
+    var before: u8 = 0;
+    while (true) {
+        const c = try stdin.readByte();
+        // ctrl-a + x is exit key
+        if (before == 0x1 and c == 'x') {
+            break;
+        }
+        core.uart.putc(c);
+        before = c;
     }
 }
 
