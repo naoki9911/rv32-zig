@@ -1,5 +1,6 @@
 const std = @import("std");
 const log = std.log;
+const console = @import("console.zig");
 
 const WORD = u32;
 const WORD_BIT_WIDTH_PLUS_ONE = u6;
@@ -915,6 +916,7 @@ const CLINT = struct {
 const UART = struct {
     csr: *CSR,
     plic: *PLIC,
+    con: *console.Console,
 
     // TODO: implement TX FIFO
     fcr: u8 = 0,
@@ -943,10 +945,11 @@ const UART = struct {
     const LSR_RX_READY: u32 = 1;
     const LSR_TX_IDLE: u32 = 1 << 5;
 
-    pub fn init(csr: *CSR, plic: *PLIC) Self {
+    pub fn init(csr: *CSR, plic: *PLIC, con: *console.Console) Self {
         return .{
             .csr = csr,
             .plic = plic,
+            .con = con,
         };
     }
 
@@ -977,7 +980,12 @@ const UART = struct {
     pub fn mem_write(self: *Self, addr: u34, val: WORD, word_size: usize) MMIOError!void {
         if (word_size != 1) return MMIOError.InvalidWordSize;
         switch (addr) {
-            UART_THR_ADDR => std.debug.print("{c}", .{@as(u8, @intCast(val & 0xFF))}),
+            UART_THR_ADDR => {
+                var cs = [_]u8{@intCast(val & 0xFF)};
+                self.con.write(&cs) catch |err| {
+                    log.err("failed to write character {}", .{err});
+                };
+            },
             UART_IER_ADDR => {
                 self.ier = @intCast(val & 0xFF);
                 if (self.ier & 0x1 == 0) self.plic.irq_deactivate(IRQ_NUM);
@@ -1460,6 +1468,7 @@ pub const CPU = struct {
     uart: UART,
     plic: *PLIC,
     virtio_blk: VirtioBlk,
+    con: *console.Console,
     exit_on_ecall: bool = false,
 
     excep_next_pc: WORD = 0,
@@ -1480,8 +1489,13 @@ pub const CPU = struct {
 
         const mem = try allocator.alloc(u32, MEMORY_SIZE >> 2);
         @memset(mem, 0);
+
+        const cons = try allocator.alloc(console.Console, 1);
+        @memset(cons, console.Console{});
+        const con: *console.Console = @ptrCast(cons);
+
         const blk = try VirtioBlk.init(@intFromPtr(&mem[0]), MEMORY_BASE_ADDR, plic);
-        const uart = UART.init(csr, plic);
+        const uart = UART.init(csr, plic, con);
         return .{
             .pc = MEMORY_BASE_ADDR, // for riscv-tests
             .regs = [1]WORD{0} ** 32,
@@ -1492,6 +1506,7 @@ pub const CPU = struct {
             .uart = uart,
             .plic = plic,
             .virtio_blk = blk,
+            .con = con,
         };
     }
 
