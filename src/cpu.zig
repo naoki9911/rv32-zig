@@ -4,7 +4,7 @@ const console = @import("console.zig");
 
 const WORD = u32;
 const WORD_BIT_WIDTH_PLUS_ONE = u6;
-const MEMORY_SIZE = 0x100000; // 128KiB
+const MEMORY_SIZE = 0x8000000; // 128MiB
 const MEMORY_BASE_ADDR = 0x80000000; // riscv-tests
 
 const CSR = struct {
@@ -861,6 +861,7 @@ const MMIOError = error{
 const CLINT = struct {
     csr: *CSR,
     cycle_counter: u64 = 0,
+    msip_enable: bool = false,
     mtime: u64 = 0,
     mtimecmp: u64 = 0,
 
@@ -879,6 +880,7 @@ const CLINT = struct {
     pub fn mem_read(self: *Self, addr: u34, word_size: usize) MMIOError!WORD {
         if (word_size != 4) return MMIOError.InvalidWordSize;
         switch (addr) {
+            CLINT_MSIP_ADDR => if (self.msip_enable) return 1 else return 0,
             CLINT_MTIMECMP_ADDR => return @as(WORD, @intCast(self.mtimecmp & 0xFFFF_FFFF)),
             CLINT_MTIMECMP_ADDR + 4 => return @as(WORD, @intCast((self.mtimecmp >> 32) & 0xFFFF_FFFF)),
             CLINT_MTIME_ADDR => return @as(WORD, @intCast(self.mtime & 0xFFFF_FFFF)),
@@ -890,6 +892,11 @@ const CLINT = struct {
     pub fn mem_write(self: *Self, addr: u34, val: WORD, word_size: usize) MMIOError!void {
         if (word_size != 4) return MMIOError.InvalidWordSize;
         switch (addr) {
+            CLINT_MSIP_ADDR => if (val & 0x1 == 1) {
+                self.msip_enable = true;
+            } else {
+                self.msip_enable = false;
+            },
             CLINT_MTIMECMP_ADDR => self.mtimecmp = self.mtimecmp & 0xFFFFFFFF_00000000 | val,
             CLINT_MTIMECMP_ADDR + 4 => self.mtimecmp = (@as(u64, @intCast(val)) << 32) | self.mtimecmp & 0xFFFFFFFF,
             CLINT_MTIME_ADDR => self.mtime = self.mtime & 0xFFFFFFFF_00000000 | val,
@@ -907,8 +914,10 @@ const CLINT = struct {
 
         if (self.mtime >= self.mtimecmp) {
             self.csr.reg_mip.mtip = 1;
+            if (self.msip_enable) self.csr.reg_mip.msip = 1;
         } else {
             self.csr.reg_mip.mtip = 0;
+            if (self.msip_enable) self.csr.reg_mip.msip = 0;
         }
     }
 };
@@ -923,6 +932,7 @@ const UART = struct {
     lcr: u8 = 0,
     isr: u8 = 0,
     ier: u8 = 0,
+    scratchpad: u8 = 0,
     to_read: ?u8 = null,
 
     const Self = @This();
@@ -932,11 +942,13 @@ const UART = struct {
     // http://byterunner.com/16550.html
     const UART_RHR_ADDR: u32 = UART_BASE;
     const UART_THR_ADDR: u32 = UART_BASE;
-    const UART_IER_ADDR: u32 = UART_BASE + 1 * 4; // intrrupt enable register
-    const UART_FCR_ADDR: u32 = UART_BASE + 2 * 4; // FIFO control register
-    const UART_ISR_ADDR: u32 = UART_BASE + 2 * 4; // interrupt status register
-    const UART_LCR_ADDR: u32 = UART_BASE + 3 * 4; // line control register
-    const UART_LSR_ADDR: u32 = UART_BASE + 5 * 4; // line status register
+    const UART_IER_ADDR: u32 = UART_BASE + 1; // intrrupt enable register
+    const UART_FCR_ADDR: u32 = UART_BASE + 2; // FIFO control register
+    const UART_ISR_ADDR: u32 = UART_BASE + 2; // interrupt status register
+    const UART_LCR_ADDR: u32 = UART_BASE + 3; // line control register
+    const UART_MDM_ADDR: u32 = UART_BASE + 4; // modem control register
+    const UART_LSR_ADDR: u32 = UART_BASE + 5; // line status register
+    const UART_SRT_ADDR: u32 = UART_BASE + 7; // scratchpad register
 
     const FCR_FIFO_ENABLE: u32 = 1;
     const FCR_FIFO_CLEAR: u32 = 3 << 1;
@@ -973,6 +985,7 @@ const UART = struct {
                     return LSR_TX_IDLE;
                 }
             },
+            UART_SRT_ADDR => return self.scratchpad,
             else => return MMIOError.NotHooked,
         }
     }
@@ -992,6 +1005,8 @@ const UART = struct {
             },
             UART_FCR_ADDR => self.fcr = @intCast(val & 0xFF),
             UART_LCR_ADDR => self.lcr = @intCast(val & 0xFF),
+            UART_MDM_ADDR => return,
+            UART_SRT_ADDR => self.scratchpad = @intCast(val & 0xFF),
             else => return MMIOError.NotHooked,
         }
     }
@@ -1458,16 +1473,294 @@ pub const VirtioBlk = struct {
     }
 };
 
+pub const VirtioConsole = struct {
+    host_mem_base_addr: usize,
+    guest_mem_base_addr: usize,
+    plic: *PLIC,
+
+    status: u32 = 0,
+    driver_feature_sel: u32 = 0,
+    driver_features: [2]u32 = [2]u32{ 0, VIRTIO_F_VERSION },
+    driver_features_fixed: bool = false,
+
+    device_feature_sel: u32 = 0,
+    qsel: u32 = 0,
+    queue: [2]?VQ = [2]?VQ{ null, null },
+    tmp_queue_num: u32 = 0,
+    tmp_queue_desc: u32 = 0,
+    tmp_driver_desc: u32 = 0,
+    tmp_device_desc: u32 = 0,
+
+    const DeviceFeatures: [2]u32 = [2]u32{ 0, VIRTIO_F_VERSION };
+    const MaxQueueSize: u32 = 32;
+    const Self = @This();
+    const VQ = virtio.Virtqueue(Self);
+    const IRQ_NUM = 1;
+    const BASE_ADDR: u32 = 0x10001000;
+
+    // virtio v1.3 spec "4.2.2 MMIO Device Register Layout"
+    const MAGIC_VALUE: u32 = 0x000;
+    const VERSION: u32 = 0x004;
+    const DEVICE_ID: u32 = 0x008;
+    const VENDOR_ID: u32 = 0x00C;
+    const DEVICE_FEATURES: u32 = 0x010;
+    const DEVICE_FEATURES_SEL: u32 = 0x014;
+    const DRIVER_FEATURES: u32 = 0x020;
+    const DRIVER_FEATURES_SEL: u32 = 0x024;
+    const QUEUE_SEL: u32 = 0x030;
+    const QUEUE_SIZE_MAX: u32 = 0x034;
+    const QUEUE_SIZE: u32 = 0x038;
+    const QUEUE_READY: u32 = 0x044;
+    const QUEUE_NOTIFY: u32 = 0x050;
+    const INTERRUPT_STATUS: u32 = 0x060;
+    const INTERRUPT_ACK: u32 = 0x064;
+    const STATUS: u32 = 0x070;
+    const QUEUE_DESC_LOW: u32 = 0x080;
+    const QUEUE_DESC_HIGH: u32 = 0x084;
+    const QUEUE_DRIVER_LOW: u32 = 0x090;
+    const QUEUE_DRIVER_HIGH: u32 = 0x094;
+    const QUEUE_DEVICE_LOW: u32 = 0x0A0;
+    const QUEUE_DEVICE_HIGH: u32 = 0x0A4;
+    const SHM_SEL: u32 = 0x0AC;
+    const SHM_LEN_LOW: u32 = 0x0B0;
+    const SHM_LEN_HIGH: u32 = 0x0B4;
+    const SHM_BASE_LOW: u32 = 0x0B8;
+    const SHM_BASE_HIGH: u32 = 0x0BC;
+    const QUEUE_RESET: u32 = 0x0C0;
+    const CONFIG_GENERATION: u32 = 0x0FC;
+
+    // DeviceFeaturesSel = 1
+    const VIRTIO_F_VERSION: u32 = (1 << (32 - 32));
+    const VIRTIO_F_ACCESS_PLATFORM: u32 = (1 << (33 - 32));
+    const VIRTIO_F_RING_PACKED: u32 = (1 << (34 - 32));
+    const VIRTIO_F_IN_ORDER: u32 = (1 << (35 - 32));
+    const VIRTIO_F_ORDER_PLATFORM: u32 = (1 << (36 - 32));
+    const VIRTIO_F_SR_IOV: u32 = (1 << (37 - 32));
+    const VIRTIO_F_NOTIFICATION_DATA: u32 = (1 << (38 - 32));
+    const VIRTIO_F_NOTIF_CONFIG_DATA: u32 = (1 << (39 - 32));
+    const VIRTIO_F_RING_RESET: u32 = (1 << (40 - 32));
+    const VIRTIO_F_ADMIN_VQ: u32 = (1 << (41 - 32));
+
+    // virtio v1.3 spec "2.1 Device Status Field"
+    const STATUS_ACKNOWLEDGE: u32 = 1;
+    const STATUS_DRIVER: u32 = 2;
+    const STATUS_FAILED: u32 = 128;
+    const STATUS_FEATURES_OK: u32 = 8;
+    const STATUS_DRIVER_OK: u32 = 4;
+    const STATUS_DEVICE_NEEDS_RESET: u32 = 64;
+
+    pub fn init(host_mem_base: usize, guest_mem_base: usize, plic: *PLIC) !Self {
+        return .{
+            .host_mem_base_addr = host_mem_base,
+            .guest_mem_base_addr = guest_mem_base,
+            .plic = plic,
+        };
+    }
+
+    pub fn mem_read(self: *Self, addr: u34, word_size: usize) MMIOError!WORD {
+        if (word_size != 4) return MMIOError.InvalidWordSize;
+        if (addr < BASE_ADDR) return MMIOError.NotHooked;
+
+        const reg_addr = addr - BASE_ADDR;
+        switch (reg_addr) {
+            MAGIC_VALUE => {
+                log.warn("CONSOLE MAGIC VALUE READ", .{});
+                return 0x74726976; // Magic value
+            },
+            VERSION => return 2, // Device version number
+            DEVICE_ID => return 3, // Virtio subsystem Device ID (console = 3)
+            VENDOR_ID => return 0x554d4551, // Virtio Subsystem Vendor ID
+            DEVICE_FEATURES => {
+                const sel = self.device_feature_sel;
+                if (sel < 2) {
+                    return DeviceFeatures[sel];
+                } else {
+                    return 0;
+                }
+            },
+            DEVICE_FEATURES_SEL => return MMIOError.WriteOnly,
+            DRIVER_FEATURES => return MMIOError.WriteOnly,
+            DRIVER_FEATURES_SEL => return MMIOError.WriteOnly,
+            QUEUE_SEL => return MMIOError.WriteOnly,
+            QUEUE_SIZE_MAX => return MaxQueueSize,
+            QUEUE_SIZE => return MMIOError.WriteOnly,
+            QUEUE_DESC_LOW, QUEUE_DESC_HIGH => return MMIOError.WriteOnly,
+            QUEUE_DRIVER_LOW, QUEUE_DRIVER_HIGH => return MMIOError.WriteOnly,
+            QUEUE_DEVICE_LOW, QUEUE_DEVICE_HIGH => return MMIOError.WriteOnly,
+            QUEUE_READY => {
+                if (self.queue[self.qsel] == null) {
+                    log.warn("[virtio-con] Queue {} is ready", .{self.qsel});
+                    return 0;
+                } else {
+                    log.warn("[virtio-con] Queue {} is not ready", .{self.qsel});
+                    return 1;
+                }
+            },
+            QUEUE_NOTIFY => return MMIOError.WriteOnly,
+            INTERRUPT_STATUS => return 0x3,
+            INTERRUPT_ACK => return MMIOError.WriteOnly,
+            STATUS => return self.status,
+            else => return MMIOError.NotHooked,
+        }
+    }
+
+    pub fn mem_write(self: *Self, addr: u34, val: WORD, word_size: usize) MMIOError!void {
+        if (word_size != 4) return MMIOError.InvalidWordSize;
+        if (addr < BASE_ADDR) return MMIOError.NotHooked;
+
+        const reg_addr = addr - BASE_ADDR;
+        switch (reg_addr) {
+            MAGIC_VALUE => return MMIOError.ReadOnly,
+            VERSION => return MMIOError.ReadOnly,
+            DEVICE_ID => return MMIOError.ReadOnly,
+            VENDOR_ID => return MMIOError.ReadOnly,
+            DEVICE_FEATURES => return MMIOError.ReadOnly,
+            DEVICE_FEATURES_SEL => self.device_feature_sel = val,
+            DRIVER_FEATURES => {
+                if (self.driver_features_fixed) return;
+                const sel = self.driver_feature_sel;
+                if (sel < 2) {
+                    self.driver_features[sel] = val;
+                }
+            },
+            DRIVER_FEATURES_SEL => self.driver_feature_sel = val,
+            QUEUE_SEL => self.qsel = val, // TODO: handle val != 0 (without MQ support, num of queues must be 1)
+            QUEUE_SIZE_MAX => return MMIOError.ReadOnly,
+            QUEUE_SIZE => {
+                if (self.tmp_queue_num <= MaxQueueSize) {
+                    self.tmp_queue_num = val;
+                } else {
+                    self.tmp_queue_num = MaxQueueSize;
+                }
+            },
+            QUEUE_DESC_LOW => {
+                if (val & 0x3 != 0) return MMIOError.InvalidAlignment;
+                self.tmp_queue_desc = val;
+                std.log.info("DESC = 0x{x}", .{self.tmp_queue_desc});
+            },
+            QUEUE_DRIVER_LOW => {
+                if (val & 0x3 != 0) return MMIOError.InvalidAlignment;
+                self.tmp_driver_desc = val;
+                std.log.info("DRIVER = 0x{x}", .{self.tmp_driver_desc});
+            },
+            QUEUE_DEVICE_LOW => {
+                if (val & 0x3 != 0) return MMIOError.InvalidAlignment;
+                self.tmp_device_desc = val;
+                std.log.info("DEVICE = 0x{x}", .{self.tmp_device_desc});
+            },
+            QUEUE_DESC_HIGH, QUEUE_DRIVER_HIGH, QUEUE_DEVICE_HIGH => return, // TODO: handle val != 0
+            QUEUE_READY => {
+                if (self.queue[self.qsel] == null) {
+                    const desc_addr = (@as(usize, @intCast(self.tmp_queue_desc)) - self.guest_mem_base_addr) + self.host_mem_base_addr;
+                    const avail_addr = (@as(usize, @intCast(self.tmp_driver_desc)) - self.guest_mem_base_addr) + self.host_mem_base_addr;
+                    const used_addr = (@as(usize, @intCast(self.tmp_device_desc)) - self.guest_mem_base_addr) + self.host_mem_base_addr;
+                    self.queue[self.qsel] = virtio.Virtqueue(Self).init(self.tmp_queue_num, desc_addr, avail_addr, used_addr);
+                }
+            },
+            QUEUE_NOTIFY => {
+                log.info("[virtio-con] notified", .{});
+
+                _ = self.queue[self.qsel].?.handle(self) catch |err| {
+                    log.err("virtio queue handle err {}", .{err});
+                    return MMIOError.InternalError;
+                };
+
+                self.plic.irq_activate(IRQ_NUM);
+            },
+            INTERRUPT_STATUS => return MMIOError.ReadOnly,
+            INTERRUPT_ACK => {
+                self.plic.irq_deactivate(IRQ_NUM);
+                // check whether there are something to notify
+                // if exists, re-activate irq.
+            },
+            STATUS => {
+                // TODO handle ACKNOWLEDGE, DRIVER bits and manage state-machine
+                self.status = val;
+                if (self.status & STATUS_FEATURES_OK > 0) {
+                    // if features that are not expected are configured, not to accept them.
+                    var i: usize = 0;
+                    while (i < self.driver_features.len) : (i += 1) {
+                        if (self.driver_features[i] & ~(DeviceFeatures[i]) != 0) {
+                            std.log.err("unexpected features: 0x{x}", .{self.driver_features[i]});
+                            self.status &= ~(STATUS_FEATURES_OK);
+                        }
+                    }
+                    if (self.status & STATUS_FEATURES_OK > 0) self.driver_features_fixed = true;
+                }
+            },
+            else => return MMIOError.NotHooked,
+        }
+    }
+
+    pub fn handleVirtqueue(self: *Self, descs: []*VQ.DescriptorTable) !void {
+        if (descs.len < 3) {
+            log.err("invalid block request", .{});
+            return VQ.Error.InvalidRequest;
+        }
+
+        for (descs) |desc| {
+            const buf = @as([*]u8, @ptrFromInt(desc.address - self.guest_mem_base_addr + self.host_mem_base_addr))[0..desc.length];
+            log.warn("virtio-console: ", .{});
+            _ = try std.io.getStdOut().write(buf);
+        }
+    }
+};
+
+pub const DTB = struct {
+    dtb: []u8 = &[_]u8{},
+
+    pub const DTB_BASE_ADDR: u34 = 0x100;
+    const Self = @This();
+
+    pub fn init() Self {
+        return .{};
+    }
+
+    pub fn load_dtb(dtb_path: []const u8, allocator: std.mem.Allocator) !Self {
+        var f = try std.fs.cwd().openFile(dtb_path, .{});
+        const fstat = try f.stat();
+        // alignment is 32-bit
+        const dtb = try allocator.alloc(u8, fstat.size + 3);
+        errdefer allocator.free(dtb);
+        const read_size = try f.readAll(dtb);
+        std.log.info("dtb loaded size = {}", .{read_size});
+
+        return Self{
+            .dtb = dtb,
+        };
+    }
+
+    pub fn mem_read(self: *Self, addr: u34, word_size: usize) MMIOError!WORD {
+        if (self.dtb.len == 0 or addr < DTB_BASE_ADDR or (DTB_BASE_ADDR + self.dtb.len) < addr + word_size) return MMIOError.NotHooked;
+        const dtb_addr = addr - DTB_BASE_ADDR;
+        switch (word_size) {
+            1 => return @intCast(self.dtb[dtb_addr]),
+            2 => return @intCast(std.mem.readInt(u16, self.dtb[dtb_addr .. dtb_addr + 2][0..2], .little)),
+            4 => return @intCast(std.mem.readInt(u32, self.dtb[dtb_addr .. dtb_addr + 4][0..4], .little)),
+            else => return MMIOError.InvalidWordSize,
+        }
+    }
+
+    pub fn mem_write(self: *Self, addr: u34, val: WORD, word_size: usize) MMIOError!void {
+        _ = val;
+        _ = word_size;
+        if (self.dtb.len == 0 or addr < DTB_BASE_ADDR or DTB_BASE_ADDR + self.dtb.len < addr) return MMIOError.NotHooked;
+        return MMIOError.ReadOnly;
+    }
+};
+
 pub const CPU = struct {
     pc: WORD,
     regs: [32]WORD,
     mem: []WORD,
+    dtb: DTB = DTB.init(),
     mem_reserves: std.AutoHashMap(WORD, void),
     csr: *CSR,
     clint: CLINT,
     uart: UART,
     plic: *PLIC,
-    virtio_blk: VirtioBlk,
+    //virtio_blk: VirtioBlk,
+    virtio_blk: VirtioConsole,
     con: *console.Console,
     exit_on_ecall: bool = false,
 
@@ -1494,7 +1787,8 @@ pub const CPU = struct {
         @memset(cons, console.Console{});
         const con: *console.Console = @ptrCast(cons);
 
-        const blk = try VirtioBlk.init(@intFromPtr(&mem[0]), MEMORY_BASE_ADDR, plic);
+        //const blk = try VirtioBlk.init(@intFromPtr(&mem[0]), MEMORY_BASE_ADDR, plic);
+        const blk = try VirtioConsole.init(@intFromPtr(&mem[0]), MEMORY_BASE_ADDR, plic);
         const uart = UART.init(csr, plic, con);
         return .{
             .pc = MEMORY_BASE_ADDR, // for riscv-tests
@@ -1561,6 +1855,9 @@ pub const CPU = struct {
     pub fn mem_pread(self: *Self, addr: u34, exec: bool, word_size: usize) !WORD {
         try self.csr.check_memory_access((addr >> 2) << 2, true, false, exec);
 
+        if (self.dtb.mem_read(addr, word_size)) |res| {
+            return res;
+        } else |_| {}
         if (self.clint.mem_read(addr, word_size)) |res| {
             return res;
         } else |_| {} // if not hooked, continue.
@@ -1577,6 +1874,7 @@ pub const CPU = struct {
         // TODO: remove MEMORY_BASE_ADDR
         if (addr < MEMORY_BASE_ADDR) std.log.err("[MEM.READ] addr=0x{x} is out of bound", .{addr});
         const mem_addr = (addr - MEMORY_BASE_ADDR) >> 2;
+        if (mem_addr >= self.mem.len) std.log.err("[MEM.READ] addr=0x{x} is out of bound", .{addr});
         const lower_addr: u2 = @intCast(addr & 0x3);
         switch (word_size) {
             1 => switch (lower_addr) {
@@ -1604,6 +1902,9 @@ pub const CPU = struct {
     pub fn mem_pwrite(self: *Self, addr: u34, val: WORD, word_size: usize) !void {
         try self.csr.check_memory_access((addr >> 2) << 2, false, true, false);
 
+        if (self.dtb.mem_write(addr, val, word_size)) {
+            return;
+        } else |_| {}
         if (self.clint.mem_write(addr, val, word_size)) {
             return;
         } else |_| {}
@@ -1620,6 +1921,7 @@ pub const CPU = struct {
         // TODO: remove MEMORY_BASE_ADDR
         if (addr < MEMORY_BASE_ADDR) std.log.err("[MEM.WRITE] addr=0x{x} is out of bound", .{addr});
         const mem_addr = (addr - MEMORY_BASE_ADDR) >> 2;
+        if (mem_addr >= self.mem.len) std.log.err("[MEM.WRITE] addr=0x{x} is out of bound", .{addr});
         const lower_addr: u2 = @intCast(addr & 0x3);
         switch (word_size) {
             1 => switch (lower_addr) {
@@ -2947,7 +3249,7 @@ test "risc-v tests" {
 
         std.debug.print("testing {s} (size={d})\n", .{ test_file, read_size });
 
-        var c = CPU.init(gpa.allocator());
+        var c = try CPU.init(gpa.allocator());
         c.exit_on_ecall = true;
         try c.load_memory(test_file_buffer[0..read_size], 0);
         while (true) {
@@ -2973,7 +3275,7 @@ test "risc-v tests" {
 
         std.debug.print("testing {s} (size={d})\n", .{ test_file, read_size });
 
-        var c = CPU.init(gpa.allocator());
+        var c = try CPU.init(gpa.allocator());
         c.exit_on_ecall = true;
         try c.load_memory(test_file_buffer[0..read_size], 0);
         while (true) {

@@ -1,7 +1,7 @@
 FROM mcr.microsoft.com/devcontainers/base:ubuntu24.04
 
 RUN apt update && apt upgrade -y
-RUN apt install -y build-essential jq curl python3 autoconf automake autotools-dev python3-pip python3-tomli libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev ninja-build git cmake libglib2.0-dev libslirp-dev
+RUN apt install -y build-essential jq curl python3 autoconf automake autotools-dev python3-pip python3-tomli libmpc-dev libmpfr-dev libgmp-dev gawk build-essential bison flex texinfo gperf libtool patchutils bc zlib1g-dev libexpat-dev ninja-build cmake libslirp-dev git libglib2.0-dev libfdt-dev libpixman-1-dev
 COPY install_zig.sh /install_zig.sh
 
 USER vscode
@@ -9,7 +9,15 @@ WORKDIR /home/vscode
 
 RUN /install_zig.sh
 
+RUN wget -O qemu.tar.gz https://github.com/qemu/qemu/archive/refs/tags/v9.2.0.tar.gz
+RUN tar -xvf qemu.tar.gz
+WORKDIR /home/vscode/qemu-9.2.0
+RUN ./configure --target-list=riscv32-softmmu,riscv64-softmmu --prefix=~/.local/qemu
+RUN make -j $(nproc)
+RUN make install
+
+WORKDIR /home/vscode
 RUN wget -O toolchain.tar.xz https://github.com/riscv-collab/riscv-gnu-toolchain/releases/download/2024.12.16/riscv32-elf-ubuntu-22.04-gcc-nightly-2024.12.16-nightly.tar.xz
 RUN mkdir ~/.local/riscv32
 RUN tar -xvf toolchain.tar.xz --strip-components 1 -C ~/.local/riscv32
-RUN echo 'export PATH=$PATH:$HOME/.local/riscv32/bin' >> ~/.bashrc
+RUN echo 'export PATH=$PATH:$HOME/.local/qemu/bin:$HOME/.local/riscv32/bin' >> ~/.bashrc

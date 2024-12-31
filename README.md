@@ -26,3 +26,6 @@ $ make -j $(nproc) && find . -maxdepth 1 -perm -111 -type f | xargs -I {} riscv6
 
 ## CLINT
 - https://chromitem-soc.readthedocs.io/en/latest/clint.html
+
+## Linux
+- https://shmknrk.hatenablog.com/entry/2024/12/01/175405

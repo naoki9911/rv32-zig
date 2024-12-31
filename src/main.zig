@@ -22,7 +22,8 @@ pub fn main() !void {
     switch (options.options.mode) {
         .cpu => {
             //var f = try std.fs.cwd().openFile("./riscv-tests/isa/rv32ui-v-add.bin", .{});
-            var f = try std.fs.cwd().openFile("./xv6-riscv/kernel/kernel.bin", .{});
+            //var f = try std.fs.cwd().openFile("./xv6-riscv/kernel/kernel.bin", .{});
+            var f = try std.fs.cwd().openFile("./dts/fw_payload.bin", .{});
             const fstat = try f.stat();
             var test_file_buffer = try allocator.allocator().alloc(u8, fstat.size);
             defer allocator.allocator().free(test_file_buffer);
@@ -33,7 +34,13 @@ pub fn main() !void {
             if (options.options.testing) {
                 c.exit_on_ecall = true;
             }
+            // for OpenSBI
+            // a0 = hartid
+            // a1 = dtb's base address
+            c.regs[10] = 0;
+            c.regs[11] = cpu.DTB.DTB_BASE_ADDR;
             try c.load_memory(test_file_buffer[0..read_size], 0);
+            c.dtb = try cpu.DTB.load_dtb("./dts/rv32-zig.dtb", allocator.allocator());
             try c.con.startConsoleServer();
 
             _ = try std.Thread.spawn(.{}, handleConsole, .{&c});
